@@ -2,7 +2,7 @@ groups:
   - name: lab
     rules:
       - alert: InstanceDown
-        expr: up == 0
+        expr: up ==
         for: 1m
         labels:
           severity: critical
