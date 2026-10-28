@@ -1,0 +1,23 @@
+---
+- name: Install node_exporter on all lab servers
+  hosts: lab
+  become: true
+
+  tasks:
+    - name: Install prometheus-node-exporter
+      ansible.builtin.apt:
+        name: prometheus-node-exporter
+        state: present
+        update_cache: true
+
+    - name: Ensure service is running and enabled
+      ansible.builtin.service:
+        name: prometheus-node-exporter
+        state: started
+        enabled: true
+
+    - name: Check that metrics endpoint responds
+      ansible.builtin.uri:
+        url: http://localhost:9100/metrics
+        status_code: 200
+        return_content: false
