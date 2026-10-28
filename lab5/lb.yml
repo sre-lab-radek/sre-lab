@@ -1,0 +1,55 @@
+---
+- name: Configure load balancer
+  hosts: lb
+  become: true
+
+  tasks:
+    - name: Install nginx
+      ansible.builtin.apt:
+        name: nginx
+        state: present
+        update_cache: true
+
+    - name: Remove default site
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: Reload nginx
+
+    - name: Deploy load balancer config
+      ansible.builtin.copy:
+        dest: /etc/nginx/conf.d/lb.conf
+        mode: "0644"
+        content: |
+          upstream web_backend {
+              server 192.168.122.14 max_fails=1 fail_timeout=10s;
+              server 192.168.122.175 max_fails=1 fail_timeout=10s;
+          }
+
+          server {
+              listen 80;
+
+              location / {
+                  proxy_pass http://web_backend;
+                  proxy_next_upstream error timeout http_502 http_503 http_504;
+                  proxy_connect_timeout 1s;
+                  add_header X-Served-By $upstream_addr always;
+              }
+          }
+      notify: Reload nginx
+
+    - name: Validate nginx config
+      ansible.builtin.command: nginx -t
+      changed_when: false
+
+    - name: Ensure nginx is running and enabled
+      ansible.builtin.service:
+        name: nginx
+        state: started
+        enabled: true
+
+  handlers:
+    - name: Reload nginx
+      ansible.builtin.service:
+        name: nginx
+        state: reloaded
