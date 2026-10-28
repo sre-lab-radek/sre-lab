@@ -34,9 +34,9 @@
 - Alert reached nobody: there is no notification channel.
 
 ## Action items
-- [ ] Add Alertmanager with notifications (Telegram/Discord/e-mail)
-- [ ] Set `evaluation_interval: 15s` and re-run the test to compare detection time
-- [ ] Put a load balancer in front of web1/web2 so a single web failure is invisible to users
+- [x] Add Alertmanager with notifications (Telegram/Discord/e-mail)
+- [x] Set `evaluation_interval: 15s` and re-run the test to compare detection time
+- [x] Put a load balancer in front of web1/web2 so a single web failure is invisible to users
 - [ ] Extend the availability panel to show data only when a full 6h window exists
 
 
