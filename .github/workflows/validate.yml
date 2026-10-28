@@ -1,0 +1,42 @@
+name: validate
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lint YAML files
+        run: |
+          pip install yamllint
+          yamllint .
+
+      - name: Check Ansible playbooks (syntax)
+        run: |
+          pip install ansible-core
+          cd lab1
+          for f in patch.yml site.yml node-exporter.yml ../lab5/lb.yml; do
+            ansible-playbook --syntax-check "$f"
+          done
+
+      - name: Check Prometheus config and rules
+        run: |
+          docker run --rm --entrypoint promtool \
+            -v "$PWD/lab2/prometheus.yml:/etc/prometheus/prometheus.yml:ro" \
+            -v "$PWD/lab2/alerts.yml:/etc/prometheus/alerts.yml:ro" \
+            prom/prometheus check config /etc/prometheus/prometheus.yml
+
+      - name: Check Alertmanager config
+        run: |
+          echo "dummy-token" > /tmp/telegram_token
+          docker run --rm --entrypoint amtool \
+            -v "$PWD/lab2/alertmanager.yml:/a.yml:ro" \
+            -v "/tmp/telegram_token:/etc/alertmanager/telegram_token:ro" \
+            prom/alertmanager check-config /a.yml
+
+      - name: Validate docker compose file
+        run: docker compose -f lab2/docker-compose.yml config -q
