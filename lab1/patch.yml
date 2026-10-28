@@ -1,0 +1,30 @@
+---
+- name: Patch all lab servers
+  hosts: lab
+  become: true
+  serial: 1   # po jednej maszynie naraz, jak w prawdziwym patchowaniu
+
+  tasks:
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Upgrade all packages
+      ansible.builtin.apt:
+        upgrade: dist
+      register: upgrade_result
+
+    - name: Check if reboot is required
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_flag
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: changed={{ upgrade_result.changed }}, reboot_required={{ reboot_flag.stat.exists }}"
+
+    - name: Reboot if required (only with -e do_reboot=true)
+      ansible.builtin.reboot:
+        reboot_timeout: 300
+      when: reboot_flag.stat.exists and (do_reboot | default(false) | bool)

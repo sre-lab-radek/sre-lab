@@ -1,0 +1,49 @@
+---
+- name: Configure web servers
+  hosts: web
+  become: true
+
+  tasks:
+    - name: Install nginx
+      ansible.builtin.apt:
+        name: nginx
+        state: present
+        update_cache: true
+
+    - name: Deploy index page with hostname
+      ansible.builtin.copy:
+        content: "Hello from {{ inventory_hostname }}\n"
+        dest: /var/www/html/index.html
+        mode: "0644"
+
+    - name: Ensure nginx is running and enabled
+      ansible.builtin.service:
+        name: nginx
+        state: started
+        enabled: true
+
+- name: Configure database server
+  hosts: db
+  become: true
+
+  tasks:
+    - name: Install PostgreSQL
+      ansible.builtin.apt:
+        name: postgresql
+        state: present
+        update_cache: true
+
+    - name: Ensure PostgreSQL is running and enabled
+      ansible.builtin.service:
+        name: postgresql
+        state: started
+        enabled: true
+
+    - name: Check that PostgreSQL accepts connections
+      ansible.builtin.command: pg_isready
+      register: pg_ready
+      changed_when: false
+
+    - name: Show result
+      ansible.builtin.debug:
+        var: pg_ready.stdout
