@@ -5,3 +5,4 @@ id_*
 *.tfstate
 *.tfstate.*
 .env
+lab2/secrets/

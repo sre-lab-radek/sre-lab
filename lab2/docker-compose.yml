@@ -8,6 +8,15 @@ services:
       - ./alerts.yml:/etc/prometheus/alerts.yml:ro
       - prom_data:/prometheus
 
+  alertmanager:
+    image: prom/alertmanager
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./secrets/telegram_token:/etc/alertmanager/telegram_token:ro
+      - am_data:/alertmanager
+
   grafana:
     image: grafana/grafana-oss
     network_mode: host
@@ -23,3 +32,4 @@ services:
 volumes:
   prom_data:
   grafana_data:
+  am_data:

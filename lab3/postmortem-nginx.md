@@ -38,3 +38,17 @@
 - [ ] Set `evaluation_interval: 15s` and re-run the test to compare detection time
 - [ ] Put a load balancer in front of web1/web2 so a single web failure is invisible to users
 - [ ] Extend the availability panel to show data only when a full 6h window exists
+
+
+
+## Detection time: before and after tuning
+
+| | Before | After |
+|---|---|---|
+| evaluation_interval | 1m (default) | 15s |
+| Notification channel | none | Telegram via Alertmanager |
+| Failure to alert firing | about 2 min | about 1 min |
+| Failure to human notified | never | about 1 min |
+
+Test 2 timeline (UTC): nginx stopped 17:28:23, FIRING 17:29, RESOLVED 17:30.
+Note: RESOLVED arrives with a delay (group_interval 1m), so it does not mark the exact recovery time.
