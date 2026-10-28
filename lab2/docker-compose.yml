@@ -15,6 +15,11 @@ services:
     volumes:
       - grafana_data:/var/lib/grafana
 
+  blackbox:
+    image: prom/blackbox-exporter
+    network_mode: host
+    restart: unless-stopped
+
 volumes:
   prom_data:
   grafana_data:

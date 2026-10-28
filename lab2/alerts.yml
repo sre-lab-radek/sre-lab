@@ -8,3 +8,21 @@ groups:
           severity: critical
         annotations:
           summary: "{{ $labels.instance }} is down"
+
+      - alert: WebProbeFailing
+        expr: probe_success{job="blackbox-http"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "HTTP probe failing for {{ $labels.instance }}"
+
+  - name: slo
+    rules:
+      # share of successful probes over the last 6h
+      - record: sli:availability:ratio_6h
+        expr: avg_over_time(probe_success{job="blackbox-http"}[6h])
+
+      # SLO 99% over 6h = 216 s allowed downtime = 14.4 failed probes (15 s each)
+      - record: slo:error_budget_remaining:ratio_6h
+        expr: 1 - (sum_over_time((1 - probe_success{job="blackbox-http"})[6h:15s]) / 14.4)
