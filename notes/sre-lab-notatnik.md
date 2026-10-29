@@ -3,7 +3,7 @@
 Ten plik to Twoja ściąga i podręcznik z laboratorium. Rośnie po każdym dziale. Na końcu każdego działu dopisuję:
 co zrobiliśmy, na co uważać, nowe pojęcia i nowe polecenia.
 
-Wersja: 2 (działy 0-9 z ćwiczeniami, stan na 28.10.2026)
+Wersja: 3 (działy 0-10 z ćwiczeniami, stan na 29.10.2026)
 
 ## Jak czytać ten plik
 
@@ -57,6 +57,7 @@ sre-lab/
   lab5/                 load balancer
   lab6/                 postmortem CI
   lab7/                 postmortem CD
+  lab8/                 Terraform (AWS), Ansible dla AWS, postmortem-aws.md
 ```
 
 Poza repozytorium (celowo): `~/deploy/` (skrypt wdrażający, kopia konfiguracji, token Telegrama).
@@ -68,6 +69,8 @@ Poza repozytorium (celowo): `~/deploy/` (skrypt wdrażający, kopia konfiguracji
 3. Po zmianie pliku konfiguracji usługa musi ją wczytać (restart lub reload). Zapisany plik to jeszcze nie zmiana na serwerze.
 4. Test awarii: zapisz `date` przed i po. Bez godzin nie zmierzysz czasu wykrycia.
 5. Hipotezę oddzielaj od faktu.
+6. W chmurze nic nie zostaje na noc: po sesji `terraform destroy` i kontrola konsoli.
+7. Godziny testów bierz z metryk i logów (uwaga na UTC), nie z pamięci.
 
 ---
 
@@ -659,7 +662,137 @@ git revert --no-edit HEAD
 
 ---
 
-## 12. Słowniczek
+## 12. Dział 10 – Terraform i AWS
+
+### Co zrobiliśmy
+Konto AWS (plan Free, MFA na koncie głównym, region eu-north-1), użytkownik IAM `terraform-radek` z kluczem dostępu, AWS CLI na `[sre-lab]`. Kod Terraform w `lab8/`. Odtworzyliśmy lab w chmurze: sieć VPC, dwie instancje EC2 z nginx, ALB, Ansible (ten sam `site.yml` co w labie), monitoring na trzeciej instancji, test awarii web1 i `terraform destroy`. Pełny postmortem: `lab8/postmortem-aws.md`.
+
+### Mapa: lab domowy a AWS
+| Lab domowy | AWS / Terraform |
+|---|---|
+| maszyna KVM (web1, web2) | instancja EC2 (`aws_instance`) |
+| obraz bazowy (qcow2) | AMI (`data "aws_ami"`, Ubuntu 24.04) |
+| cloud-init | `user_data` |
+| sieć libvirt | VPC + podsieci + brama internetowa + tablica tras |
+| `ufw` | Security Group |
+| lb1 (nginx) | ALB (Application Load Balancer) |
+| `lab_vm.pub` w maszynach | Key Pair (`aws_key_pair`) |
+| `virsh` ręcznie | `terraform apply` i `terraform destroy` |
+
+### Kluczowe informacje
+- **Terraform** opisuje infrastrukturę kodem (IaC). Opisujesz stan docelowy, a Terraform sam wylicza kroki.
+- **Cykl pracy:** `init` (pobranie providera) → `plan` (co się zmieni) → `apply` (wykonanie) → `destroy` (usunięcie wszystkiego).
+- **Stan** (`terraform.tfstate`) to pamięć Terraforma o tym, co istnieje. Zawiera dane wrażliwe, więc **nie wchodzi do Gita** (`.gitignore`: `*.tfstate`, `*.tfstate.*`, `.terraform/`, `*.tfvars`). Plik `.terraform.lock.hcl` commitujemy.
+- Terraform czyta **wszystkie pliki `.tf`** z bieżącego katalogu, więc kod można dzielić na `main.tf`, `ec2.tf`, `monitoring.tf`.
+- Symbole w planie:
+
+| Symbol | Znaczenie | Przykład |
+|---|---|---|
+| `+` | utworzenie | pierwszy `apply` z VPC |
+| `~` | zmiana na miejscu (to samo `id`) | tag VPC, nowa reguła Security Group |
+| `-/+` | zniszczenie i utworzenie od nowa (nowe `id`) | zmiana `cidr_block` (`# forces replacement`) |
+| `-` | usunięcie | `terraform destroy` |
+
+- `data` tylko **odczytuje** informacje z AWS (np. numer konta, najnowszy AMI). `resource` tworzy zasób.
+- `variable` deklaruje wejście, wartość leży w `terraform.tfvars` (poza Gitem). `output` wypisuje wynik.
+- `for_each` tworzy wiele podobnych zasobów z jednej definicji (`each.key`, `each.value`). Tak powstały web1 i web2.
+- Odwołania (`aws_vpc.lab.id`) tworzą zależności, według których Terraform ustala kolejność tworzenia (i odwrotną przy usuwaniu).
+- **Security Group** może wskazywać **inną** Security Group zamiast adresu IP (monitoring → port 9100 na webach).
+- **ALB** potrzebuje podsieci w co najmniej dwóch strefach dostępności. **Health check** (3 × 30 s) decyduje o wyłączeniu i przywróceniu backendu. W czasie tej zwłoki ALB zwraca `502`.
+- Adresy IP instancji zmieniają się po każdym `apply`, więc inwentarz Ansible generuje skrypt `gen-inventory.py` z `terraform output -json`.
+- Ansible: `template` (szablony **Jinja2**, pętle `{% for %}`), `handlers` + `notify` (restart tylko po zmianie pliku), `changed_when` (kiedy uznać krok za zmianę).
+- **Konto AWS Free:** po 6 miesiącach lub po zużyciu kredytów konto się zamyka. Zadanie „Explore AWS: Set up a cost budget" dało 20 USD kredytu.
+- **Czas:** Prometheus UI, Ansible i systemd podają **UTC**. W Polsce zimą czas lokalny = UTC + 1 h.
+
+### Wyniki z laba
+| Co | Wynik |
+|---|---|
+| Cykl na VPC | `+` (create) → `~` (tag) → `-/+` (CIDR, nowe `id`) → `-` (destroy) |
+| Sieć | `Plan: 8 to add` |
+| EC2 + ALB | `Plan: 8 to add`; 20 zapytań do ALB: 10 × web1 i 10 × web2 |
+| Monitoring | `Plan: 2 to add, 1 to change` (nowa maszyna + reguła 9100) |
+| Ansible `site.yml` na EC2 | `changed=0` (nginx i strona już były z `user_data`) |
+| Ansible `monitoring.yml` | pierwsze uruchomienie: `mon1` changed=8; drugie: **changed=0** |
+| Test awarii web1 | nginx stop 11:20:06, `firing` 11:21:00 (54 s), ALB bez web1 ok. 11:22, nginx start 11:25:41, sonda OK 11:26:00 |
+| `terraform destroy` | 18 zasobów, 11:36:15 – 11:37:27, konsola pusta |
+
+### Na co uważać
+- **Po sesji zawsze `terraform destroy`** i sprawdź konsolę AWS (instancje, load balancery, wolumeny, VPC). Nic nie zostaje na noc.
+- Klucze dostępu AWS tylko w `~/.aws/credentials`. Nigdy w repozytorium ani w czacie.
+- SSH w Security Group tylko z własnego adresu `/32`. Jeśli dostawca zmieni Ci adres IP, zmień `terraform.tfvars` i zrób `apply`.
+- Czytaj plan przed `apply`. Szczególnie `-/+` i `-`.
+- W HCL **każdy atrybut w osobnej linii**. Wklejony w jednej linii blok się nie wczyta.
+- Jeden styl reguł Security Group naraz (w bloku albo jako osobne zasoby), bo mieszanie obu powoduje konflikty (ostrzega dokumentacja providera).
+- `terraform` uruchamiasz w katalogu z plikami `.tf`, a `git add lab8` z katalogu głównego repozytorium.
+- Nie nazywaj hosta tak samo jak grupy w inwentarzu Ansible.
+- Godziny z testów bierz z metryk i logów (`query_range`), nie z pamięci. Zapisuj strefę czasową.
+- ALB potrzebuje około 1,5 min na wyłączenie i przywrócenie backendu. Test mierz pętlą z `date`.
+- Dane w Prometheusie na maszynie `mon` znikają razem z nią po `destroy`. Odczytaj godziny **przed** sprzątaniem.
+
+### Polecenia
+```bash
+aws configure                         # klucz, region eu-north-1, format json
+aws sts get-caller-identity           # kto jestem? (sprawdzenie klucza)
+
+cd ~/sre-lab/lab8
+terraform init
+terraform fmt                         # formatowanie
+terraform validate                    # składnia
+terraform plan
+terraform apply
+terraform output
+terraform output -raw alb_dns
+terraform destroy
+
+cd ~/sre-lab/lab8/ansible
+python3 gen-inventory.py > inventory.ini
+ansible all -m ping
+ansible-playbook monitoring.yml
+ansible web1 -b -m service -a "name=nginx state=stopped"
+
+S=$(date -d '11:10' +%s); E=$(date +%s)
+curl -s -G http://IP_MON:9090/api/v1/query_range \
+  --data-urlencode 'query=probe_success{instance="http://10.0.1.44"}' \
+  --data-urlencode "start=$S" --data-urlencode "end=$E" --data-urlencode "step=15"
+```
+
+### Ćwiczenia (sprawdź siebie)
+
+**Pytania**
+
+1. Co robią po kolei `terraform init`, `plan`, `apply` i `destroy`?
+2. Co oznaczają symbole `+`, `~`, `-/+` i `-` w planie? Który wymaga największej ostrożności?
+3. Dlaczego `terraform.tfstate` nie może trafić do publicznego repozytorium?
+4. Czym różni się blok `data` od bloku `resource`?
+5. Po co jest `variable "my_ip"` i dlaczego jej wartość leży w `terraform.tfvars`?
+6. Co daje `for_each` i jak w kodzie dostać się do nazwy (web1 / web2)?
+7. Dlaczego ALB zwracał `502` po zatrzymaniu nginx na web1 i ile mniej więcej to trwa?
+8. Dlaczego reguła dla portu 9100 wskazuje Security Group `mon`, a nie adres IP?
+9. Dlaczego inwentarz Ansible generujemy skryptem z outputów Terraforma?
+10. Dlaczego drugie uruchomienie `monitoring.yml` dało `changed=0` i kiedy uruchomiłby się handler?
+11. W Prometheusie widzisz zdarzenie o 10:20:22. Która to godzina lokalnie i skąd wiesz?
+12. Policz z danych z testu: czas wykrycia (od zatrzymania nginx do `firing`) i czas od startu nginx do udanej sondy.
+
+**Odpowiedzi**
+
+1. `init` pobiera providera i przygotowuje katalog. `plan` pokazuje, co się zmieni, bez zmian. `apply` wykonuje zmiany po potwierdzeniu. `destroy` usuwa wszystko, co Terraform utworzył.
+2. `+` utworzenie, `~` zmiana na miejscu, `-/+` zniszczenie i utworzenie od nowa, `-` usunięcie. Najostrożniej z `-/+` i `-`: przy prawdziwych maszynach grożą przerwą i utratą danych.
+3. Zawiera dane o zasobach i potencjalnie wrażliwe wartości. Repozytorium jest publiczne.
+4. `data` tylko odczytuje istniejące informacje, a `resource` tworzy i zarządza zasobem.
+5. Zmienna deklaruje, że projekt potrzebuje wartości (adres IP). Wartość w `terraform.tfvars` zostaje poza Gitem, więc nie trafia do publicznego kodu.
+6. Jedna definicja tworzy wiele zasobów. W bloku używa się `each.key` (nazwa) i `each.value` (np. podsieć).
+7. ALB jeszcze kierował ruch do web1, bo health check musi 3 razy z rzędu (co 30 s) zakończyć się niepowodzeniem. To około 90 s. W tym czasie żądania do web1 kończą się `502`.
+8. Adres IP instancji zmienia się po każdym `apply`. Reguła „wpuść wszystkich z grupy `mon`" działa zawsze.
+9. Adresy IP zmieniają się po każdym `apply`, więc ręczne wpisywanie jest błędogenne.
+10. Wszystkie zadania były już w stanie docelowym: pakiety zainstalowane, pliki identyczne, kontenery działają. Handler uruchamia się tylko wtedy, gdy zadanie z `notify` zgłosi zmianę (np. zmieni się `prometheus.yml`).
+11. 11:20:22. Prometheus UI i logi Ansible/systemd podają UTC, a w Polsce zimą jest UTC + 1 h. Potwierdzenie: log systemd pokazał zatrzymanie nginx o 10:20:06 UTC, a Ty zrobiłeś to o 11:20 lokalnie.
+12. Wykrycie: 11:20:06 → 11:21:00 = 54 s. Powrót sondy: 11:25:41 → 11:26:00 = około 19 s.
+
+**Zadanie praktyczne:** dodaj trzeci backend `web3` do `local.web_servers` w `ec2.tf` (podsieć `public_a`). Uruchom `terraform plan` i przewidź, ile zasobów dojdzie (podpowiedź: instancja i jej przypisanie do grupy docelowej). Potem `apply`, odśwież inwentarz (`gen-inventory.py`), uruchom `site.yml`, sprawdź pętlą `curl`, że odpowiadają trzy backendy, i zrób `terraform destroy`.
+
+---
+
+## 13. Słowniczek
 
 ### Podstawy SRE
 - **SRE** (Site Reliability Engineering): podejście do utrzymania niezawodności usług przez inżynierię (automatyzacja, pomiary, cele).
@@ -714,9 +847,29 @@ git revert --no-edit HEAD
 - **Heredoc**: wieloliniowy tekst w powłoce (`<< 'EOF'`).
 - **UTC**: czas uniwersalny. Polska to UTC+1 (zima) i UTC+2 (lato).
 
+### Terraform i AWS
+- **Terraform**: narzędzie IaC, które tworzy i zmienia infrastrukturę według kodu.
+- **Provider**: wtyczka Terraforma do konkretnej platformy (tu AWS).
+- **Resource / data source**: zasób tworzony przez Terraform / informacja tylko odczytywana.
+- **State** (`terraform.tfstate`): zapis tego, co Terraform utworzył. Nie commitujemy go.
+- **plan / apply / destroy**: podgląd zmian / wykonanie / usunięcie wszystkiego.
+- **Variable / output**: wejście do kodu / wynik wypisywany na końcu.
+- **`for_each`**: tworzenie wielu podobnych zasobów z jednej definicji.
+- **HCL**: język, w którym pisze się pliki `.tf`.
+- **Region / Availability Zone (AZ)**: obszar geograficzny AWS / osobne centrum danych w regionie.
+- **VPC**: prywatna sieć w AWS. **Subnet**: podsieć w jednej strefie. **Internet Gateway**: wyjście do internetu. **Route table**: tablica tras.
+- **Security Group**: wirtualny firewall instancji (reguły wejścia i wyjścia).
+- **EC2**: wirtualne maszyny w AWS. **AMI**: obraz systemu. **Instance type** (np. `t3.micro`): rozmiar maszyny.
+- **`user_data`**: skrypt uruchamiany raz przy pierwszym starcie instancji (jak cloud-init).
+- **ALB** (Application Load Balancer): load balancer warstwy HTTP. **Target group**: grupa backendów. **Listener**: port, na którym ALB nasłuchuje. **Health check**: sprawdzanie, czy backend żyje.
+- **IAM user / access key**: użytkownik w AWS / jego klucz do CLI. **Least privilege**: tylko minimalne potrzebne uprawnienia.
+- **Credits**: kredyty AWS na koncie. **Budget**: limit kosztów z alertem.
+- **Jinja2 / template**: język szablonów w Ansible (`{{ zmienna }}`, `{% for %}`).
+- **Handler / notify**: krok uruchamiany tylko po zmianie, którą zgłosiło inne zadanie.
+
 ---
 
-## 13. Ściąga składni
+## 14. Ściąga składni
 
 ### YAML
 ```yaml
@@ -838,9 +991,41 @@ virsh list --all | start NAZWA | shutdown NAZWA | autostart NAZWA
 virsh net-list --all | net-dhcp-leases default
 ```
 
+### Terraform (HCL)
+```hcl
+provider "aws" {
+  region = "eu-north-1"
+}
+
+variable "my_ip" {
+  type = string
+}
+
+resource "aws_vpc" "lab" {
+  cidr_block = "10.0.0.0/16"
+  tags = {
+    Name = "sre-lab"
+  }
+}
+
+output "vpc_id" {
+  value = aws_vpc.lab.id
+}
+```
+Każdy atrybut w osobnej linii. Odwołanie do innego zasobu: `typ.nazwa.atrybut`. Wartość zmiennej: `var.nazwa`. Pętla: `for_each = mapa` i `each.key` / `each.value`.
+```bash
+terraform init | fmt | validate | plan | apply | destroy | output
+```
+
+### AWS CLI
+```bash
+aws configure
+aws sts get-caller-identity
+```
+
 ---
 
-## 14. Lista kontrolna "przed commitem" i "po zmianie konfiguracji"
+## 15. Lista kontrolna "przed commitem" i "po zmianie konfiguracji"
 
 Przed commitem:
 1. `git status` – czy na liście nie ma sekretów (`secrets/`, tokeny, klucze)?
@@ -857,10 +1042,20 @@ Po zmianie konfiguracji usługi:
 Podczas testu awarii:
 1. Zapisz `date` przed i po. 2. Zapisz godzinę alertu na Telegramie.
 3. Po teście sprawdź, że stan jest przywrócony. 4. Spisz wnioski w postmortemie.
+5. Najlepiej uruchom pętlę, która sama zapisuje godziny i kody odpowiedzi (`date -Is`, `curl -w`, `tee`).
+6. Pamiętaj o strefie czasowej (Prometheus i Ansible podają UTC).
+
+Przed `terraform apply`:
+1. Jesteś w katalogu z plikami `.tf` (`pwd`, `ls`). 2. `fmt` i `validate` przeszły.
+3. Przeczytałeś plan (liczba zasobów, symbole `-/+` i `-`). 4. Zapisałeś godzinę.
+
+Po sesji w chmurze:
+1. `terraform destroy`. 2. Konsola AWS: instancje, load balancery, wolumeny, VPC.
+3. Koszty i kredyty następnego dnia (dane mają opóźnienie). 4. `git status` przed commitem (stan i `tfvars` poza Gitem).
 
 ---
 
-## 15. Typowe błędy z tego laba (tabela diagnostyczna)
+## 16. Typowe błędy z tego laba (tabela diagnostyczna)
 
 | Objaw | Najczęstsza przyczyna | Co zrobić |
 |---|---|---|
@@ -876,21 +1071,28 @@ Podczas testu awarii:
 | token w `git status` | brak wpisu w `.gitignore` | `git restore --staged`, wpis w `.gitignore` |
 | fałszywy `InstanceDown` po rollbacku | hipoteza: odtworzenie kontenera i okno staleness | reload zamiast recreate (do sprawdzenia) |
 | nowy plik w złym folderze w VS Code | zaznaczony inny folder | `touch` w terminalu, potem edycja |
+| `Error: No configuration files` | `terraform` uruchomiony w katalogu bez `.tf` | `cd ~/sre-lab/lab8` |
+| `fatal: pathspec 'lab8' did not match any files` | `git add lab8` z podkatalogu | `cd ~/sre-lab` |
+| `Error: Argument or block definition required` | rozbita linia lub brak `=` w pliku `.tf` | `sed -n 'N,Mp' main.tf`, popraw linię |
+| `Could not resolve hostname adres_ip_web1` | w poleceniu został tekst przykładowy | wstaw prawdziwy adres |
+| `Found both group and host with same name` | host i grupa o tej samej nazwie w inwentarzu | zmień nazwę hosta (`mon1`) |
+| ALB zwraca `502` po awarii backendu | health check jeszcze go nie wyłączył (3 × 30 s) | poczekaj ok. 90 s, mierz pętlą z `date` |
+| godzina w Prometheusie o 1 h inna niż lokalna | UTC zamiast czasu lokalnego | dodaj 1 h (zima) lub 2 h (lato) |
 
 ---
 
-## 16. Status planu nauki i co dalej
+## 17. Status planu nauki i co dalej
 
 | Etap planu | Status |
 |---|---|
 | Python, Bash, Git, sieci (etap 1) | Bash i Git używane praktycznie. Python i sieci jeszcze do zrobienia |
-| Docker, Terraform, AWS (etap 2) | Docker zrobiony. Terraform i AWS: **jutro** |
+| Docker, Terraform, AWS (etap 2) | Docker zrobiony. Terraform i AWS zrobione w podstawach (VPC, EC2, ALB, destroy). Do zrobienia: zdalny stan (S3), moduły, IAM z minimalnymi uprawnieniami |
 | CI/CD i obserwowalność (etap 3) | zrobione w wersji lokalnej (Prometheus, Grafana, Alertmanager, CI, CD) |
 | Kubernetes (etap 4) | tylko test w kind. Do zrobienia |
 | Praktyki SRE, portfolio (etap 5) | postmortemy po każdym dziale, SLO. Do rozbudowy |
 
 Najbliższe kroki:
-1. Terraform na AWS (konto, budżet i alerty kosztów, VPC, instancje, load balancer, `terraform destroy` po ćwiczeniu).
+1. Sprawdzić koszty i kredyty AWS (dane z opóźnieniem). Powtórzyć test awarii z pomiarem godzin, Alertmanagerem w AWS i zawężonymi uprawnieniami IAM.
 2. Dopisanie do README po angielsku opisu całego laboratorium.
 3. Naprawa fałszywych alertów (reload zamiast recreate) i sprawdzenie hipotez.
 4. Certyfikat AWS Solutions Architect Associate.
@@ -899,7 +1101,8 @@ Najbliższe kroki:
 
 ---
 
-## 17. Historia zmian notatnika
+## 18. Historia zmian notatnika
 
 - Wersja 1: działy 0-9 (środowisko, Docker i kind, KVM, Ansible, monitoring, SLO, Alertmanager, load balancer, CI, CD), słowniczek, ściąga składni, tabela błędów.
 - Wersja 2: ćwiczenia (pytania, odpowiedzi, zadanie praktyczne) na końcu każdego działu. Notatnik trzymany w repozytorium (`notes/`).
+- Wersja 3: dział 10 (Terraform i AWS) z ćwiczeniami, słowniczek i ściąga składni dla Terraform i AWS CLI, nowe wiersze w tabeli błędów, rozszerzone listy kontrolne, nowe zasady (chmura, godziny z metryk).
