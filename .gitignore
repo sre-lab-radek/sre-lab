@@ -6,3 +6,8 @@ id_*
 *.tfstate.*
 .env
 lab2/secrets/
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+crash.log
