@@ -87,6 +87,14 @@ resource "aws_security_group" "web" {
   vpc_id      = aws_vpc.lab.id
 
   ingress {
+    description     = "node_exporter z monitoringu"
+    from_port       = 9100
+    to_port         = 9100
+    protocol        = "tcp"
+    security_groups = [aws_security_group.mon.id]
+  }
+
+  ingress {
     description = "HTTP"
     from_port   = 80
     to_port     = 80
@@ -101,6 +109,7 @@ resource "aws_security_group" "web" {
     protocol    = "tcp"
     cidr_blocks = [var.my_ip]
   }
+
 
   egress {
     from_port   = 0

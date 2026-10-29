@@ -1,0 +1,74 @@
+---
+- name: Install node_exporter on web servers and monitoring host
+  hosts: web:mon
+  become: true
+
+  tasks:
+    - name: Install node exporter
+      ansible.builtin.apt:
+        name: prometheus-node-exporter
+        state: present
+        update_cache: true
+
+    - name: Ensure node exporter is running and enabled
+      ansible.builtin.service:
+        name: prometheus-node-exporter
+        state: started
+        enabled: true
+
+- name: Deploy monitoring stack
+  hosts: mon
+  become: true
+
+  tasks:
+    - name: Install Docker and compose plugin
+      ansible.builtin.apt:
+        name:
+          - docker.io
+          - docker-compose-v2
+        state: present
+        update_cache: true
+
+    - name: Ensure Docker is running and enabled
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Create monitoring directory
+      ansible.builtin.file:
+        path: /opt/monitoring
+        state: directory
+        mode: "0755"
+
+    - name: Copy docker-compose.yml
+      ansible.builtin.copy:
+        src: files/docker-compose.yml
+        dest: /opt/monitoring/docker-compose.yml
+        mode: "0644"
+
+    - name: Copy alert rules from lab2
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../lab2/alerts.yml"
+        dest: /opt/monitoring/alerts.yml
+        mode: "0644"
+
+    - name: Render prometheus.yml from template
+      ansible.builtin.template:
+        src: templates/prometheus.yml.j2
+        dest: /opt/monitoring/prometheus.yml
+        mode: "0644"
+      notify: Restart prometheus
+
+    - name: Start the stack
+      ansible.builtin.command: docker compose up -d
+      args:
+        chdir: /opt/monitoring
+      register: compose_up
+      changed_when: "'Created' in compose_up.stderr or 'Started' in compose_up.stderr"
+
+  handlers:
+    - name: Restart prometheus
+      ansible.builtin.command: docker compose restart prometheus
+      args:
+        chdir: /opt/monitoring

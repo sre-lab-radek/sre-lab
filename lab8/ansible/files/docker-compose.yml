@@ -1,0 +1,25 @@
+services:
+  prometheus:
+    image: prom/prometheus
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prom_data:/prometheus
+
+  grafana:
+    image: grafana/grafana-oss
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - grafana_data:/var/lib/grafana
+
+  blackbox:
+    image: prom/blackbox-exporter
+    network_mode: host
+    restart: unless-stopped
+
+volumes:
+  prom_data:
+  grafana_data:
