@@ -11,3 +11,4 @@ lab2/secrets/
 *.tfstate.*
 *.tfvars
 crash.log
+lab8/ansible/inventory.ini
