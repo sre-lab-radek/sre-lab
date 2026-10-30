@@ -1,0 +1,13 @@
+# WZOR. Prawdziwy alertmanager.yml (z chat_id) lezy tylko na VPS, poza repo.
+route:
+  receiver: telegram
+  group_by: [alertname]
+  group_wait: 30s
+  repeat_interval: 4h
+
+receivers:
+  - name: telegram
+    telegram_configs:
+      - bot_token_file: /etc/alertmanager/telegram_token
+        chat_id: TWOJ_CHAT_ID
+        send_resolved: true
