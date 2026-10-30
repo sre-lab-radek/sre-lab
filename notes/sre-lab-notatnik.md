@@ -3,7 +3,7 @@
 Ten plik to Twoja ściąga i podręcznik z laboratorium. Rośnie po każdym dziale. Na końcu każdego działu dopisuję:
 co zrobiliśmy, na co uważać, nowe pojęcia i nowe polecenia.
 
-Wersja: 4 (działy 0-11 z ćwiczeniami, stan na 30.10.2026)
+Wersja: 4.1 (działy 0-11 z ćwiczeniami, stan na 30.10.2026)
 
 ## Jak czytać ten plik
 
@@ -613,24 +613,33 @@ Skrypt `~/deploy/pull-deploy.sh` w cronie co 5 minut. Pobiera `main`, waliduje k
 - **Health check** z ponawianiem (12 prób co 5 s), bo zaraz po restarcie Prometheus pokazuje `0 targets` lub `unknown`.
 - Każdy commit jest obsługiwany raz (`last_sha`). Poprawką jest nowy commit (`git revert`).
 - `flock -n` w cronie zapobiega równoległemu uruchomieniu dwóch wdrożeń.
+- **Każdy** nowy commit na `main` (także sama dokumentacja) powoduje `--force-recreate` Prometheusa i Alertmanagera. Wdrożenie zdrowej zmiany trwa ok. 22 s, a od pushu do wdrożenia mija 0–5 minut (czekanie na tick crona).
+- Skrypt zapisuje `last_sha` **przed** walidacją i wdrożeniem, więc zepsuty commit jest obsługiwany tylko raz (brak pętli ponawiania).
+- Rollback cofa tylko pliki w `~/deploy`. Zepsuty commit zostaje na `main`, dopóki nie zrobisz `git revert`.
 
 ### Trzy warstwy kontroli (z testów)
 | Test | Zmiana | CI | Walidacja na serwerze | Kontrola po wdrożeniu | Wynik |
 |---|---|---|---|---|---|
 | A, B | zły port celu (`:9199`) | zielone | przeszła | **nie przeszła** | rollback po ok. 63 s |
 | C | zepsute wyrażenie PromQL | **czerwone** | **odrzucone** | nie dotarło | nic nie wdrożono |
+| D (30.10) | job z celem `localhost:9999`, który nie odpowiada | zielone | przeszła | **nie przeszła** | rollback po 63 s od wykrycia, fałszywy alert po rollbacku |
 
-### Fałszywy alert (otwarte pytanie)
+### Fałszywy alert po rollbacku (hipoteza 1 mocno wspierana)
 `InstanceDown` dla nieistniejącego już celu `192.168.122.14:9199` wysłał `Firing` (ok. 20:26 UTC) i `Resolved` (ok. 20:34 UTC), mimo że rollback już się odbył.
 - **Hipoteza 1:** kontener został odtworzony zamiast przeładowany, więc stara seria nie dostała znacznika wygaśnięcia, a Prometheus przez ok. 5 minut (okno "staleness") widział ostatnią wartość 0. Dane zgadzają się z tym (seria widoczna do 20:34:09).
 - **Hipoteza 2:** stan alertu został odtworzony po restarcie (może tłumaczyć `pending → firing` w 7 s przy `for: 1m`). Nie sprawdzona.
 - Niewyjaśnione: dlaczego pierwszy alert pojawił się dopiero po ok. 2 minutach.
+- **Test D (30.10) powtórzył zjawisko.** Rollback o 12:41:05, ale `InstanceDown` dla usuniętego celu wrócił jako *pending* o 12:41:12 i *firing* 12:42:15 – 12:45:55 (3 min 40 s). Koniec alertu wypadł ok. 4 min 55 s po ostatniej próbce, czyli w granicach 5-minutowego lookbacku. To wspiera hipotezę 1. Hipoteza 2 (odtworzenie stanu alertu) nie pasuje: od *pending* do *firing* minęło 61 s, czyli pełne `for: 1m`.
+- Dowodem będzie test D2: ten sam scenariusz z przeładowaniem konfiguracji zamiast odtworzenia kontenera.
 - Pomysł naprawy do przetestowania: przeładowanie konfiguracji w działającym procesie (`--web.enable-lifecycle` i `curl -X POST localhost:9090/-/reload`).
 
 ### Na co uważać
 - Dwa takie same testy pod rząd zostawiają `main` w złym stanie. Cofnij od razu.
 - Zapisuj wynik pierwszego uruchomienia i godziny testów. Bez tego wymiary trzeba odtwarzać z logów (`git reflog --date=iso`, wykresy).
 - Cron potrzebuje pełnych ścieżek i `PATH` w skrypcie.
+- Przed testem uruchom pętlę, która sama zapisuje stan alertów, i zapisz prognozy (rollback tak/nie, alert tak/nie, czas). Po zamknięciu pętli historię alertu odczytasz z serii `ALERTS` w Prometheusie.
+- Przed commitem pliku YAML: `docker compose -f plik config` i `yamllint`. Złe wcięcie `command:` (5 zamiast 4 spacji) wyszło dopiero z `diff`.
+- Lab2 ma inne czasy Alertmanagera niż VPS: `group_wait` 10 s i `group_interval` 1 min (lab2), 30 s i 5 min (VPS).
 
 ### Polecenia
 ```bash
@@ -639,6 +648,13 @@ crontab -l
 tail -20 ~/deploy/deploy.log
 grep -E "new commit|DEPLOY OK|ROLLBACK|REJECTED|FAILED" ~/deploy/deploy.log
 git revert --no-edit HEAD
+
+# pętla logująca stan alertów co 5 s (przed testem)
+while true; do printf '%s ' "$(date -Is)"; curl -s -m 2 http://localhost:9090/api/v1/alerts | python3 -c 'import sys,json; a=json.load(sys.stdin)["data"]["alerts"]; print([(x["labels"]["alertname"],x["labels"].get("instance"),x["state"]) for x in a])' 2>/dev/null || echo prometheus-down; sleep 5; done | tee ~/test-loop.txt
+
+# historia alertu z Prometheusa po zdarzeniu
+S=$(date -d '2026-10-30 12:35:00' +%s); E=$(date +%s)
+curl -s "http://localhost:9090/api/v1/query_range?query=ALERTS%7Balertname%3D%22InstanceDown%22%7D&start=$S&end=$E&step=5"
 ```
 
 ### Ćwiczenia (sprawdź siebie)
@@ -654,6 +670,9 @@ git revert --no-edit HEAD
 7. Dlaczego test C (zepsuty PromQL) skończył się inaczej niż test A (zły port)?
 8. Jak rozumiesz hipotezę o fałszywym `InstanceDown` i jak ją sprawdzić?
 9. Co oznacza, że `pull-deploy.sh` zakończył się kodem 0 bez żadnych komunikatów?
+10. W teście D rollback skończył się o 12:41:05, a `InstanceDown` przeszedł w *firing* o 12:42:15. Dlaczego alert nie wystąpił w złym oknie 12:40:27–12:41:05?
+11. Dlaczego commit samej dokumentacji też restartuje Prometheusa?
+12. Dlaczego po rollbacku trzeba jeszcze zrobić `git revert`?
 
 **Odpowiedzi**
 
@@ -666,8 +685,11 @@ git revert --no-edit HEAD
 7. W teście C błędna składnia została zatrzymana przez CI i przez walidację na serwerze, zanim cokolwiek zostało wdrożone. W teście A składnia była poprawna, więc CI i walidacja przeszły, a błąd (nieistniejący cel) wykryła dopiero kontrola po wdrożeniu i uruchomiła rollback.
 8. **Hipoteza:** kontener został odtworzony, więc stara seria dla celu `:9199` nie dostała znacznika wygaśnięcia i przez ok. 5 minut miała wartość 0. Sprawdzenie: przeładowanie konfiguracji w działającym procesie (`--web.enable-lifecycle`, `curl -X POST localhost:9090/-/reload`) i powtórzenie testu A. Jeśli fałszywy alert zniknie, hipoteza jest potwierdzona.
 9. Na `main` nie ma nowego commita w porównaniu z tym, co już obsłużono. Skrypt nic nie robi.
+10. Alert miał `for: 1m`, a w złym oknie cel był „down" tylko 38 s (12:40:27 → 12:41:05), bo rollback odtworzył kontener wcześniej. Alert zdążył być tylko w stanie *pending*.
+11. Skrypt reaguje na każdy nowy commit na `main` i wykonuje `docker compose up -d --force-recreate prometheus alertmanager`, niezależnie od tego, które pliki zmieniono.
+12. Rollback cofa tylko pliki w `~/deploy`. Zepsuty commit zostaje na `main` w GitHubie i kolejne wdrożenie od niego wyjdzie.
 
-**Zadanie praktyczne:** wypchnij niegroźną zmianę (np. komentarz w `lab2/prometheus.yml`) i sprawdź w `~/deploy/deploy.log`, że cron wdrożył ją w ciągu 5 minut (`DEPLOY OK`).
+**Zadanie praktyczne:** wypchnij niegroźną zmianę (np. komentarz w `lab2/prometheus.yml`) i sprawdź w `~/deploy/deploy.log`, że cron wdrożył ją w ciągu 5 minut (`DEPLOY OK`). Zadanie dodatkowe (test D2): zmień skrypt tak, by po rollbacku przeładowywał konfigurację przez `/-/reload`, powtórz test D z pętlą logującą i zapisanymi prognozami i sprawdź, czy fałszywy alert wróci.
 
 ---
 
@@ -948,6 +970,9 @@ aws ce get-cost-and-usage --time-period Start=2026-10-29,End=2026-10-30 --granul
 - **pending / firing / resolved**: stany alertu.
 - **Severity**: waga alertu (`warning`, `critical`).
 - **Staleness**: Prometheus uznaje serię za wygasłą po ok. 5 minutach bez próbek (lub po znaczniku wygaśnięcia).
+- **Stale marker**: specjalna próbka zapisywana, gdy cel znika z konfiguracji (przy przeładowaniu). Przy odtworzeniu kontenera nie powstaje, więc ostatnia wartość żyje przez lookback.
+- **Lookback** (5 min): jak daleko wstecz zapytanie szuka ostatniej próbki serii.
+- **Seria `ALERTS`**: historia alertów (`pending`, `firing`) zapisana w Prometheusie, do odczytu przez `query_range`.
 - **Percentyl (p95)**: wartość, poniżej której mieści się 95% próbek.
 - **Latency / traffic / errors / saturation**: cztery złote sygnały.
 - **VU** (virtual user): wirtualny użytkownik w teście k6.
@@ -1240,7 +1265,8 @@ Po sesji w chmurze:
 | pod `ImagePullBackOff`, `server misbehaving` | DNS w sieci kind | DNS w `daemon.json` Dockera |
 | `new-line-at-end-of-file` w CI | brak pustej linii na końcu pliku | ustawienie VS Code, pętla `echo >>` |
 | token w `git status` | brak wpisu w `.gitignore` | `git restore --staged`, wpis w `.gitignore` |
-| fałszywy `InstanceDown` po rollbacku | hipoteza: odtworzenie kontenera i okno staleness | reload zamiast recreate (do sprawdzenia) |
+| fałszywy `InstanceDown` po rollbacku | odtworzenie kontenera i okno staleness (test D: 3 min 40 s *firing*, mocno wspierane) | reload zamiast recreate (test D2 do zrobienia) |
+| `command:` w compose ma inne wcięcie niż sąsiednie klucze | literówka (5 zamiast 4 spacji) | `docker compose config` i `yamllint` przed commitem |
 | nowy plik w złym folderze w VS Code | zaznaczony inny folder | `touch` w terminalu, potem edycja |
 | `Error: No configuration files` | `terraform` uruchomiony w katalogu bez `.tf` | `cd ~/sre-lab/lab8` |
 | `fatal: pathspec 'lab8' did not match any files` | `git add lab8` z podkatalogu | `cd ~/sre-lab` |
@@ -1270,7 +1296,7 @@ Po sesji w chmurze:
 | Praktyki SRE, portfolio (etap 5) | postmortemy po każdym dziale, SLO, monitoring z zewnątrz na VPS. Do rozbudowy |
 
 Najbliższe kroki:
-0. Test A (rollback), dead man's switch, test przy padniętym tunelu, test w nocy, powtórka testu B z `evaluation_interval: 15s`.
+0. Test D2 (rollback z `/-/reload`), dead man's switch, test przy padniętym tunelu, test w nocy, powtórka testu B z `evaluation_interval: 15s`, powiadomienie Telegram o rollbacku w `pull-deploy.sh`.
 1. Sprawdzić koszty i kredyty AWS (dane z opóźnieniem). Powtórzyć test awarii z pomiarem godzin, Alertmanagerem w AWS i zawężonymi uprawnieniami IAM.
 2. Dopisanie do README po angielsku opisu całego laboratorium.
 3. Naprawa fałszywych alertów (reload zamiast recreate) i sprawdzenie hipotez.
@@ -1287,3 +1313,4 @@ Najbliższe kroki:
 - Wersja 2: ćwiczenia (pytania, odpowiedzi, zadanie praktyczne) na końcu każdego działu. Notatnik trzymany w repozytorium (`notes/`).
 - Wersja 3: dział 10 (Terraform i AWS) z ćwiczeniami, słowniczek i ściąga składni dla Terraform i AWS CLI, nowe wiersze w tabeli błędów, rozszerzone listy kontrolne, nowe zasady (chmura, godziny z metryk).
 - Wersja 4: dział 11 (VPS, WireGuard, monitoring z zewnątrz, kontrola kosztów AWS, test awarii B) z ćwiczeniami, nowe wpisy w słowniczku, ściądze, listach kontrolnych i tabeli błędów, nowe zasady. Od teraz notatnik uzupełniam po każdym dziale.
+- Wersja 4.1: test D rollbacku (zepsuty cel `localhost:9999`) w dziale 9: wyniki, fałszywy alert po rollbacku (hipoteza 1 wspierana), nowe ćwiczenia 10-12, pętla logująca, nowe pojęcia (stale marker, lookback, seria `ALERTS`), wiersze w tabeli błędów.
