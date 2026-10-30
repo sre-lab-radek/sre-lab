@@ -3,7 +3,7 @@
 Ten plik to Twoja ściąga i podręcznik z laboratorium. Rośnie po każdym dziale. Na końcu każdego działu dopisuję:
 co zrobiliśmy, na co uważać, nowe pojęcia i nowe polecenia.
 
-Wersja: 4.1 (działy 0-11 z ćwiczeniami, stan na 30.10.2026)
+Wersja: 4.2 (działy 0-11 z ćwiczeniami, stan na 30.10.2026)
 
 ## Jak czytać ten plik
 
@@ -865,6 +865,7 @@ Zasada: **monitoring nie może leżeć na tej samej maszynie, którą pilnuje.**
 | Prognoza vs wynik | prognoza 5,5–6 min, wynik 6,4–7,3 min |
 | Koszt AWS 29.10 (Cost Explorer API) | 0,1754 USD (brutto), konsola 0,13 → 0,18 USD |
 | Quiz po dziale 10 | 8/10 |
+| Quiz z materiału 29–30.10 (VPS, WireGuard, monitoring, rollback) | 8/10; błędy: nazwa `00-hardening.conf`, strefa `hour()` |
 
 Wyjaśnienie rozbieżności prognozy to **hipoteza**: nieustawiony `evaluation_interval` (domyślnie 1 min). Do sprawdzenia przez ustawienie 15 s i powtórzenie testu.
 
@@ -878,6 +879,10 @@ Wyjaśnienie rozbieżności prognozy to **hipoteza**: nieustawiony `evaluation_i
 - Każdy nowy commit na `main` uruchamia w ciągu 5 minut wdrożenie na sre-lab (`pull-deploy.sh`). Nie commituj przypadkiem niedokończonych zmian (`git add` tylko wskazanych plików, nie `git add .`).
 - Skanuj i atakuj wyłącznie własny VPS i przeczytaj regulamin dostawcy.
 - Prognozę zapisuj **przed** testem. Rozbieżność z wynikiem to najcenniejsza część testu.
+
+### Do powtórki (błędy z quizu 30.10)
+- **`00-hardening.conf`**: SSH czyta pliki z `sshd_config.d/` alfabetycznie i **wygrywa pierwsza ustawiona wartość** (first match wins). Numer `00` nie ma nic wspólnego z uprawnieniami. Nazwa ma sprawić, że nasz plik wczyta się przed domyślnymi.
+- **`hour()` w PromQL to UTC.** Zimą (UTC+1) `hour() >= 8 and hour() < 22` oznacza 9:00–23:00 czasu lokalnego. Latem (UTC+2) byłoby 10:00–24:00. Zawsze przelicz strefę, zanim ustawisz okno alertu.
 
 ### Polecenia
 ```bash
@@ -1314,3 +1319,4 @@ Najbliższe kroki:
 - Wersja 3: dział 10 (Terraform i AWS) z ćwiczeniami, słowniczek i ściąga składni dla Terraform i AWS CLI, nowe wiersze w tabeli błędów, rozszerzone listy kontrolne, nowe zasady (chmura, godziny z metryk).
 - Wersja 4: dział 11 (VPS, WireGuard, monitoring z zewnątrz, kontrola kosztów AWS, test awarii B) z ćwiczeniami, nowe wpisy w słowniczku, ściądze, listach kontrolnych i tabeli błędów, nowe zasady. Od teraz notatnik uzupełniam po każdym dziale.
 - Wersja 4.1: test D rollbacku (zepsuty cel `localhost:9999`) w dziale 9: wyniki, fałszywy alert po rollbacku (hipoteza 1 wspierana), nowe ćwiczenia 10-12, pętla logująca, nowe pojęcia (stale marker, lookback, seria `ALERTS`), wiersze w tabeli błędów.
+- Wersja 4.2: wynik quizu z 29–30.10 (8/10) i sekcja „Do powtórki" w dziale 11 (SSH first match wins, `hour()` w UTC).
