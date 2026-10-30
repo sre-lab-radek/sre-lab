@@ -112,5 +112,8 @@ Przyczyna była zamierzona: ręczne zatrzymanie usługi nginx na jednym z dwóch
 - Czas życia: web1, web2 i ALB ok. 1 h 22 min (10:15–11:37), `mon` ok. 44 min (ok. 10:53–11:37).
 - `terraform destroy`: 11:36:15 – 11:37:27, 18 zasobów usuniętych.
 - Kontrola w konsoli AWS: brak instancji, brak load balancerów, brak wolumenów, w VPC tylko domyślna sieć.
-- Rachunek: w konsoli kosztów wszędzie 0 USD. Dane o zużyciu mogą pojawiać się z opóźnieniem do ok. doby, więc dokładny koszt i stan kredytów **do sprawdzenia kolejnego dnia**.
+- Rachunek w dniu sesji: w konsoli 29.10 wieczorem 0,13 USD, następnego dnia rano 0,18 USD (dane o zużyciu spływają z opóźnieniem do ok. doby).
+- Koszt dnia 29.10 według Cost Explorera API (skrypt `aws-cost.sh`, wpis z 30.10.2026 08:57:50, przed kredytami): **0,1754 USD**. Dla porównania: początkowe kredyty ok. 200 USD, czyli sesja zużyła poniżej 0,1% budżetu. Rozbicia na usługi (EC2, ALB, adresy IPv4) nie sprawdzono.
+- Dane z 28.10 i wcześniejszych dni: 0 USD (wpis w logu `aws-cost.log`).
+- Stan kredytów po sesji: nie zmierzono (kredyty odejmują się od rachunku z opóźnieniem).
 - Za wykonanie zadania „Explore AWS: Set up a cost budget" doliczono 20 USD kredytu (28.10.2026).
