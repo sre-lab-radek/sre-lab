@@ -3,12 +3,13 @@
 Ten plik to Twoja ściąga i podręcznik z laboratorium. Rośnie po każdym dziale. Na końcu każdego działu dopisuję:
 co zrobiliśmy, na co uważać, nowe pojęcia i nowe polecenia.
 
-Wersja: 3 (działy 0-10 z ćwiczeniami, stan na 29.10.2026)
+Wersja: 4 (działy 0-11 z ćwiczeniami, stan na 30.10.2026)
 
 ## Jak czytać ten plik
 
 - `[sre-lab]` = polecenie wpisujesz na serwerze Ubuntu (PC, przez SSH lub terminal VS Code Remote-SSH).
 - `[MAC]` = polecenie lub czynność na MacBooku.
+- `[VPS]` = polecenie na serwerze VPS w OVHcloud (przez `ssh ovh`).
 - Bloki z kodem YAML, skryptami i konfiguracją wklejasz **do edytora** (VS Code), nie do terminala.
 - Do terminala wklejasz tylko polecenia powłoki (bash).
 - Pojęcia po angielsku podaję w oryginale, bo tak są w ogłoszeniach i na rozmowach. Obok jest wyjaśnienie po polsku.
@@ -30,6 +31,7 @@ Wersja: 3 (działy 0-10 z ćwiczeniami, stan na 29.10.2026)
 | web2 | maszyna wirtualna, nginx | 192.168.122.175 |
 | db1 | maszyna wirtualna, PostgreSQL | 192.168.122.11 |
 | lb1 | maszyna wirtualna, nginx jako load balancer | 192.168.122.20 |
+| VPS | OVHcloud, Limburg, Ubuntu 26.04, 2 vCore, 4 GB RAM, działa 24/7 | tunel: 10.8.0.1 (sre-lab ma 10.8.0.2) |
 
 ### Porty usług
 
@@ -42,6 +44,8 @@ Wersja: 3 (działy 0-10 z ćwiczeniami, stan na 29.10.2026)
 | blackbox_exporter | 9115 |
 | node_exporter | 9100 |
 | nginx | 80 |
+| WireGuard | UDP 51820 |
+| Alertmanager (klaster) | 9094 (wyłączony przez `--cluster.listen-address=`) |
 
 ### Struktura repozytorium sre-lab
 
@@ -58,6 +62,8 @@ sre-lab/
   lab6/                 postmortem CI
   lab7/                 postmortem CD
   lab8/                 Terraform (AWS), Ansible dla AWS, postmortem-aws.md
+  lab9/                 postmortem monitoringu z VPS (kopie konfiguracji bez sekretów)
+  notes/                ten notatnik i plan nauki
 ```
 
 Poza repozytorium (celowo): `~/deploy/` (skrypt wdrażający, kopia konfiguracji, token Telegrama).
@@ -71,6 +77,9 @@ Poza repozytorium (celowo): `~/deploy/` (skrypt wdrażający, kopia konfiguracji
 5. Hipotezę oddzielaj od faktu.
 6. W chmurze nic nie zostaje na noc: po sesji `terraform destroy` i kontrola konsoli.
 7. Godziny testów bierz z metryk i logów (uwaga na UTC), nie z pamięci.
+8. Monitoring musi działać poza maszyną, którą pilnuje.
+9. Prognozę wyniku testu zapisuj przed testem. Rozbieżność uczy najwięcej.
+10. Po każdym zakończonym dziale dopisujemy wszystko do tego notatnika.
 
 ---
 
@@ -792,7 +801,129 @@ curl -s -G http://IP_MON:9090/api/v1/query_range \
 
 ---
 
-## 13. Słowniczek
+## 13. Dział 11 – VPS, tunel WireGuard i monitoring z zewnątrz
+
+### Co zrobiliśmy
+Kupiliśmy tani VPS w OVHcloud (Limburg, Ubuntu 26.04, 2 vCore, 4 GB RAM, ok. 20 zł/mies.). Zabezpieczyliśmy go (SSH tylko kluczem, `ufw`, `fail2ban`, automatyczne aktualizacje, swap 2 GB). Zbudowaliśmy tunel WireGuard VPS ↔ sre-lab. Przenieśliśmy na VPS codzienną kontrolę kosztów AWS (skrypt `aws-cost.sh` + Telegram), bo sre-lab jest na noc wyłączany. Postawiliśmy na VPS drugi monitoring (Prometheus, blackbox_exporter, Alertmanager), który z zewnątrz sprawdza sre-lab i wysyła alerty na Telegram osobnym botem. Zrobiliśmy test awarii B (zatrzymanie Prometheusa na sre-lab). Pełny postmortem: `lab9/postmortem-vps-monitoring.md`.
+
+### Mapa: kto kogo pilnuje
+| Element | Rola |
+|---|---|
+| sre-lab (10.8.0.2) | lab: Prometheus, Grafana, Docker; wyłączany na noc |
+| VPS (10.8.0.1) | działa 24/7: monitoring z zewnątrz, kontrola kosztów AWS |
+| Tunel WireGuard `wg0` | prywatna sieć 10.8.0.0/24, UDP 51820 |
+| Mac | tylko klient SSH; nie jest w tunelu, więc nie widzi 10.8.0.2 |
+
+Zasada: **monitoring nie może leżeć na tej samej maszynie, którą pilnuje.** Jak padnie sre-lab, jego własny Prometheus nic nie powie.
+
+### Kluczowe informacje
+- **WireGuard**: każda strona ma parę kluczy. Klucz **publiczny** wymieniasz, **prywatny** nigdy nie opuszcza maszyny. `AllowedIPs` mówi, jaki ruch idzie przez tunel. `PersistentKeepalive = 25` podtrzymuje tunel za NAT. Start: `wg-quick@wg0` (systemd).
+- **Zapora**: `ufw` z regułą per interfejs (`allow in on wg0 from 10.8.0.1 to any port 9090`). Najpierw `allow`, potem `enable` (inaczej odetniesz sobie SSH).
+- **SSH hardening**: logowanie tylko kluczem (`PasswordAuthentication no`, `PermitRootLogin no`). Pliki w `sshd_config.d/` są czytane w kolejności, **wygrywa pierwsza wartość**, dlatego plik nazywa się `00-hardening.conf`. Alias w `~/.ssh/config` (`ssh ovh`), `ssh-agent` i `ssh-add` zamiast wpisywania hasła klucza.
+- **Docker i `ufw`**: porty publikowane przez Dockera potrafią omijać `ufw`. Dlatego `network_mode: host` i nasłuch tylko na `127.0.0.1`.
+- **Prometheus**: `scrape_interval` (jak często zbiera), `evaluation_interval` (jak często liczy reguły; domyślnie 1 min), `for` (jak długo warunek musi trwać: *pending* → *firing*). Przeładowanie konfiguracji bez restartu: `--web.enable-lifecycle` i `POST /-/reload`.
+- **`hour()` w PromQL zwraca UTC**. Reguła `hour() >= 8 and hour() < 22` oznacza 9:00–23:00 czasu lokalnego zimą. Cron na VPS też liczy w UTC (7:00 UTC = 8:00 CET).
+- **blackbox_exporter**: sonda HTTP z `relabel_configs` (adres celu trafia do parametru `target`). Metryka `probe_success` (1 = OK).
+- **Alertmanager**: `group_wait` 30 s (czekanie na kolejne alerty z grupy), `group_interval` 5 min (domyślnie; odstęp między wiadomościami o zmianie w grupie), `repeat_interval` 4 h, `resolve_timeout` 5 min. Token bota w pliku (`bot_token_file`), nie w konfiguracji.
+- **Sekrety**: katalog `~/.secrets/` (700), pliki 600. Wysyłanie przez `curl -K -`, żeby token nie wisiał na liście procesów. `alertmanager.yml` zawiera `chat_id`, więc nie trafia do publicznego repozytorium (`.gitignore`).
+- **Cost Explorer API**: `aws ce get-cost-and-usage`, ok. 0,01 USD za zapytanie. `End` jest wyłączny, dane spływają z opóźnieniem ok. doby, wynik brutto (przed kredytami). Przez API nie sprawdzisz salda kredytów. Dla skryptu: osobny użytkownik IAM `cost-reader` z minimalnymi uprawnieniami (least privilege).
+- **Dead man's switch** (do zrobienia): alert, który ma przychodzić zawsze. Brak wiadomości oznacza, że padł sam monitoring.
+
+### Wyniki z laba
+| Co | Wynik |
+|---|---|
+| Ping przez tunel | 22,3–24,3 ms (3 pakiety) |
+| Baseline sond (czas) | sre-lab 48 ms, github.com 20 ms |
+| Test sztucznego alertu | Telegram o 10:50 lokalnie; *Resolved* po ok. 5 min (domyślny `group_interval`) |
+| Test awarii B: zatrzymanie Prometheusa | 11:00:38 (`date -Is`) |
+| Reguła *firing* | po ok. 5 min 54–57 s |
+| Wiadomość *Firing* na Telegramie | po 6 min 22 s – 7 min 21 s (godzina 11:07, do minuty) |
+| Start usługi | 11:07:14; reguła *inactive* najwyżej 22 s później |
+| Wiadomość *Resolved* | 11:12 (4 min 46 s – 5 min 45 s po starcie) |
+| Prognoza vs wynik | prognoza 5,5–6 min, wynik 6,4–7,3 min |
+| Koszt AWS 29.10 (Cost Explorer API) | 0,1754 USD (brutto), konsola 0,13 → 0,18 USD |
+| Quiz po dziale 10 | 8/10 |
+
+Wyjaśnienie rozbieżności prognozy to **hipoteza**: nieustawiony `evaluation_interval` (domyślnie 1 min). Do sprawdzenia przez ustawienie 15 s i powtórzenie testu.
+
+### Na co uważać
+- **Najpierw `ufw allow` dla SSH, dopiero potem `ufw enable`.** Zmianę SSH testuj w drugim oknie, zanim zamkniesz pierwsze.
+- Klucza prywatnego WireGuarda i SSH nie wklejasz nigdzie. W czacie i repozytorium tylko klucze publiczne.
+- Nie wystawiaj portów Prometheusa i Alertmanagera na świat: nasłuch `127.0.0.1` lub tylko interfejs `wg0`.
+- Port klastra Alertmanagera (9094) jest domyślnie otwarty na `*`. Wyłączasz go przez `--cluster.listen-address=`.
+- Czas: VPS i `hour()` to UTC, sre-lab i Telegram pokazują czas lokalny. Zapisuj strefę.
+- `docker compose down -v` kasuje wolumeny (dane).
+- Każdy nowy commit na `main` uruchamia w ciągu 5 minut wdrożenie na sre-lab (`pull-deploy.sh`). Nie commituj przypadkiem niedokończonych zmian (`git add` tylko wskazanych plików, nie `git add .`).
+- Skanuj i atakuj wyłącznie własny VPS i przeczytaj regulamin dostawcy.
+- Prognozę zapisuj **przed** testem. Rozbieżność z wynikiem to najcenniejsza część testu.
+
+### Polecenia
+```bash
+# [VPS] WireGuard
+sudo wg show
+sudo systemctl enable --now wg-quick@wg0
+ping -c 3 10.8.0.2
+
+# [VPS] zapora i logowania
+sudo ufw status verbose
+sudo fail2ban-client status sshd
+sudo journalctl -u ssh --since "1 hour ago" | grep -i "invalid user"
+
+# [VPS] monitoring
+cd ~/monitoring && docker compose ps
+docker run --rm --entrypoint promtool -v "$PWD/prometheus.yml:/etc/prometheus/prometheus.yml:ro" -v "$PWD/alerts.yml:/etc/prometheus/alerts.yml:ro" prom/prometheus check config /etc/prometheus/prometheus.yml
+curl -s -X POST http://127.0.0.1:9090/-/reload
+curl -s http://127.0.0.1:9090/api/v1/rules
+ss -tlnp | grep -c 9094
+
+# [sre-lab] test awarii B (zawsze z zapisem godzin)
+date -Is | tee ~/testB-stop.txt && docker stop lab2-prometheus-1
+date -Is | tee ~/testB-start.txt && docker start lab2-prometheus-1
+
+# [VPS] koszty AWS
+~/bin/aws-cost.sh
+aws ce get-cost-and-usage --time-period Start=2026-10-29,End=2026-10-30 --granularity DAILY --metrics UnblendedCost
+```
+
+### Ćwiczenia (sprawdź siebie)
+
+**Pytania**
+
+1. Dlaczego monitoring sre-lab postawiliśmy na VPS, a nie na sre-lab?
+2. Który klucz WireGuarda wolno wkleić do czatu i dlaczego?
+3. Co robi `AllowedIPs` i co `PersistentKeepalive`?
+4. Dlaczego plik w `sshd_config.d/` nazywa się `00-hardening.conf`?
+5. Dlaczego przy `ufw` najpierw robimy `allow` dla SSH, a dopiero potem `enable`?
+6. Dlaczego w Docker Compose używamy `network_mode: host` i nasłuchu na `127.0.0.1`?
+7. Czym różnią się `scrape_interval`, `evaluation_interval` i `for`?
+8. Reguła ma `hour() >= 8 and hour() < 22`. Od której do której godziny czasu lokalnego (zima) działa?
+9. Co robią `group_wait`, `group_interval` i `repeat_interval`?
+10. Dlaczego token Telegrama trzymamy w pliku z uprawnieniami 600, a skrypt wysyła go przez `curl -K -`?
+11. Dlaczego `alertmanager.yml` nie może trafić do publicznego repozytorium?
+12. Policz z testu B: czas od zatrzymania do *firing* w Prometheusie i do wiadomości na Telegramie. Co mówi różnica?
+13. Dlaczego koszty z Cost Explorera za dzień „dzisiejszy" są zaniżone?
+
+**Odpowiedzi**
+
+1. Gdy sre-lab jest wyłączony lub padnie, jego własny Prometheus nie wyśle żadnego alertu. Monitor musi działać poza obserwowaną maszyną, tu na VPS działającym 24/7.
+2. Tylko publiczny. Prywatny daje dostęp do tunelu i nie opuszcza swojej maszyny.
+3. `AllowedIPs` określa, jakie adresy idą przez tunel do danego peera (i skąd przyjmujemy ruch). `PersistentKeepalive` wysyła co 25 s mały pakiet, żeby tunel za NAT nie wygasł.
+4. SSH czyta pliki w kolejności alfabetycznej i wygrywa pierwsza ustawiona wartość. `00-` ustawia nasze reguły przed domyślnymi plikami dostawcy.
+5. Włączenie zapory bez reguły dla SSH odcina Cię od serwera. Najpierw wpuszczasz SSH, potem włączasz.
+6. Porty publikowane przez Dockera mogą omijać `ufw`. Nasłuch na `127.0.0.1` sprawia, że usługa nie jest widoczna z internetu.
+7. `scrape_interval`: jak często Prometheus zbiera metryki. `evaluation_interval`: jak często liczy reguły alertów. `for`: jak długo warunek musi być spełniony, zanim alert przejdzie z *pending* do *firing*.
+8. 8:00–22:00 UTC to 9:00–23:00 czasu lokalnego zimą (UTC+1), a latem 10:00–24:00 (UTC+2).
+9. `group_wait`: ile czekać na pierwsze powiadomienie, żeby zebrać alerty z grupy. `group_interval`: minimalny odstęp między kolejnymi powiadomieniami o zmianach w grupie. `repeat_interval`: jak często powtarzać wiadomość o wciąż aktywnym alercie.
+10. Plik 600 czyta tylko właściciel. `curl -K -` czyta konfigurację ze standardowego wejścia, więc token nie pojawia się w argumentach i na liście procesów (`ps`).
+11. Zawiera `chat_id` (identyfikator czatu), a repozytorium jest publiczne. Plik trafia do `.gitignore`, a w repozytorium może leżeć wersja bez wartości.
+12. *Firing*: ok. 5 min 54–57 s. Telegram: 6 min 22 s – 7 min 21 s. Różnica (ok. 25–84 s) to głównie `group_wait` 30 s plus niedokładność godziny podanej do minuty.
+13. Dane spływają z opóźnieniem ok. doby, a bieżący dzień jest niepełny. Zakres `End` jest wyłączny, więc dla jednego dnia podajesz kolejny dzień.
+
+**Zadanie praktyczne:** na VPS ustaw w `prometheus.yml` `evaluation_interval: 15s`, sprawdź `promtool check config`, przeładuj przez `/-/reload`. Zapisz prognozę czasu powiadomienia, powtórz test B z zapisem godzin i porównaj z wynikiem 6,4–7,3 min. Wynik dopisz do postmortemu.
+
+---
+
+## 14. Słowniczek
 
 ### Podstawy SRE
 - **SRE** (Site Reliability Engineering): podejście do utrzymania niezawodności usług przez inżynierię (automatyzacja, pomiary, cele).
@@ -867,9 +998,22 @@ curl -s -G http://IP_MON:9090/api/v1/query_range \
 - **Jinja2 / template**: język szablonów w Ansible (`{{ zmienna }}`, `{% for %}`).
 - **Handler / notify**: krok uruchamiany tylko po zmianie, którą zgłosiło inne zadanie.
 
+### VPS, tunel i monitoring z zewnątrz
+- **VPS**: wynajęty wirtualny serwer w centrum danych, działa całą dobę.
+- **WireGuard**: szybki VPN. **Peer**: druga strona tunelu. **Klucz publiczny / prywatny**: publiczny wymieniasz, prywatny zostaje na maszynie.
+- **`AllowedIPs`**: adresy kierowane przez tunel do peera. **`PersistentKeepalive`**: cykliczny pakiet podtrzymujący tunel za NAT.
+- **Hardening**: utwardzanie systemu (SSH tylko kluczem, zapora, aktualizacje).
+- **fail2ban**: blokuje adresy po serii nieudanych logowań. **unattended-upgrades**: automatyczne aktualizacje bezpieczeństwa.
+- **ssh-agent / `ssh-add`**: przechowuje odblokowany klucz, żeby nie wpisywać hasła klucza za każdym razem.
+- **Dead man's switch**: alert, który ma przychodzić stale. Cisza oznacza awarię monitoringu.
+- **Blast radius**: zasięg skutków awarii lub błędu. **Least privilege**: minimalne uprawnienia.
+- **`evaluation_interval`**: jak często Prometheus liczy reguły. **`group_wait` / `group_interval` / `repeat_interval`**: czasy grupowania i powtarzania powiadomień w Alertmanagerze.
+- **Cost Explorer**: usługa AWS z kosztami (API: `aws ce get-cost-and-usage`).
+- **RPO / RTO**: ile danych możesz stracić / jak szybko musisz wrócić do działania. **Reguła 3-2-1**: 3 kopie, 2 nośniki, 1 poza miejscem.
+
 ---
 
-## 14. Ściąga składni
+## 15. Ściąga składni
 
 ### YAML
 ```yaml
@@ -1023,9 +1167,32 @@ aws configure
 aws sts get-caller-identity
 ```
 
+### WireGuard i zapora (VPS)
+```bash
+wg genkey | tee priv | wg pubkey > pub     # para kluczy (priv zostaje na maszynie)
+sudo wg show                               # stan tunelu, ostatni handshake
+sudo systemctl enable --now wg-quick@wg0
+sudo ufw allow OpenSSH && sudo ufw enable  # najpierw allow, potem enable
+sudo ufw allow in on wg0 from 10.8.0.1 to any port 9090
+```
+
+### Prometheus i Alertmanager (reload, kontrola)
+```bash
+promtool check config prometheus.yml
+curl -s -X POST http://127.0.0.1:9090/-/reload      # wymaga --web.enable-lifecycle
+curl -s http://127.0.0.1:9090/api/v1/rules
+amtool check-config alertmanager.yml
+```
+
+### AWS Cost Explorer
+```bash
+aws ce get-cost-and-usage --time-period Start=2026-10-29,End=2026-10-30 \
+  --granularity DAILY --metrics UnblendedCost   # End jest wyłączny
+```
+
 ---
 
-## 15. Lista kontrolna "przed commitem" i "po zmianie konfiguracji"
+## 16. Lista kontrolna "przed commitem" i "po zmianie konfiguracji"
 
 Przed commitem:
 1. `git status` – czy na liście nie ma sekretów (`secrets/`, tokeny, klucze)?
@@ -1045,6 +1212,10 @@ Podczas testu awarii:
 5. Najlepiej uruchom pętlę, która sama zapisuje godziny i kody odpowiedzi (`date -Is`, `curl -w`, `tee`).
 6. Pamiętaj o strefie czasowej (Prometheus i Ansible podają UTC).
 
+Przed zmianą SSH lub zapory na serwerze zdalnym:
+1. Drugie okno SSH zostaje otwarte. 2. Najpierw `ufw allow`, potem `enable`.
+3. Nowy plik `sshd_config.d/00-...`, `sudo sshd -t`, dopiero reload. 4. Test logowania w nowym oknie.
+
 Przed `terraform apply`:
 1. Jesteś w katalogu z plikami `.tf` (`pwd`, `ls`). 2. `fmt` i `validate` przeszły.
 3. Przeczytałeś plan (liczba zasobów, symbole `-/+` i `-`). 4. Zapisałeś godzinę.
@@ -1055,7 +1226,7 @@ Po sesji w chmurze:
 
 ---
 
-## 16. Typowe błędy z tego laba (tabela diagnostyczna)
+## 17. Typowe błędy z tego laba (tabela diagnostyczna)
 
 | Objaw | Najczęstsza przyczyna | Co zrobić |
 |---|---|---|
@@ -1077,11 +1248,18 @@ Po sesji w chmurze:
 | `Could not resolve hostname adres_ip_web1` | w poleceniu został tekst przykładowy | wstaw prawdziwy adres |
 | `Found both group and host with same name` | host i grupa o tej samej nazwie w inwentarzu | zmień nazwę hosta (`mon1`) |
 | ALB zwraca `502` po awarii backendu | health check jeszcze go nie wyłączył (3 × 30 s) | poczekaj ok. 90 s, mierz pętlą z `date` |
+| `ssh` pyta o hasło mimo klucza | zły klucz, brak `ssh-add` lub zła kolejność plików w `sshd_config.d/` | `ssh -v`, `ssh-add`, plik `00-` |
+| Alertmanager nasłuchuje na 9094 na `*` | domyślny port klastra | `--cluster.listen-address=` |
+| `does not point to an existing file` w promtool | pliki nie zamontowane w kontenerze testowym | zamontuj `prometheus.yml` i `alerts.yml` w `/etc/prometheus/` |
+| `getUpdates` zwraca `[]` | bot nie dostał żadnej wiadomości | wyślij `/start` do bota i powtórz |
+| Telegram dostaje alert później niż prognoza | `for` + `evaluation_interval` + `group_wait` się sumują | zmierz, zapisz hipotezę, ustaw krótszy `evaluation_interval` |
+| Resolved przychodzi po ok. 5 min | domyślny `group_interval` | świadomie ustaw lub zaakceptuj |
+| Mac nie widzi 10.8.0.2 | w tunelu są tylko VPS i sre-lab | wejdź przez `ssh ovh` lub dodaj Maca jako peera |
 | godzina w Prometheusie o 1 h inna niż lokalna | UTC zamiast czasu lokalnego | dodaj 1 h (zima) lub 2 h (lato) |
 
 ---
 
-## 17. Status planu nauki i co dalej
+## 18. Status planu nauki i co dalej
 
 | Etap planu | Status |
 |---|---|
@@ -1089,20 +1267,23 @@ Po sesji w chmurze:
 | Docker, Terraform, AWS (etap 2) | Docker zrobiony. Terraform i AWS zrobione w podstawach (VPC, EC2, ALB, destroy). Do zrobienia: zdalny stan (S3), moduły, IAM z minimalnymi uprawnieniami |
 | CI/CD i obserwowalność (etap 3) | zrobione w wersji lokalnej (Prometheus, Grafana, Alertmanager, CI, CD) |
 | Kubernetes (etap 4) | tylko test w kind. Do zrobienia |
-| Praktyki SRE, portfolio (etap 5) | postmortemy po każdym dziale, SLO. Do rozbudowy |
+| Praktyki SRE, portfolio (etap 5) | postmortemy po każdym dziale, SLO, monitoring z zewnątrz na VPS. Do rozbudowy |
 
 Najbliższe kroki:
+0. Test A (rollback), dead man's switch, test przy padniętym tunelu, test w nocy, powtórka testu B z `evaluation_interval: 15s`.
 1. Sprawdzić koszty i kredyty AWS (dane z opóźnieniem). Powtórzyć test awarii z pomiarem godzin, Alertmanagerem w AWS i zawężonymi uprawnieniami IAM.
 2. Dopisanie do README po angielsku opisu całego laboratorium.
 3. Naprawa fałszywych alertów (reload zamiast recreate) i sprawdzenie hipotez.
 4. Certyfikat AWS Solutions Architect Associate.
 5. Kubernetes: aplikacja demo, monitoring, certyfikat CKA.
 6. Na końcu nauki: przegląd braków (np. Python i podstawy sieci) i wersja PDF notatnika.
+7. Sondy AWS z VPS (Security Group tylko z /32 VPS), restic do S3, zdalny stan Terraform, playbook hardeningu w `lab9/`, test odtwarzania kopii VPS.
 
 ---
 
-## 18. Historia zmian notatnika
+## 19. Historia zmian notatnika
 
 - Wersja 1: działy 0-9 (środowisko, Docker i kind, KVM, Ansible, monitoring, SLO, Alertmanager, load balancer, CI, CD), słowniczek, ściąga składni, tabela błędów.
 - Wersja 2: ćwiczenia (pytania, odpowiedzi, zadanie praktyczne) na końcu każdego działu. Notatnik trzymany w repozytorium (`notes/`).
 - Wersja 3: dział 10 (Terraform i AWS) z ćwiczeniami, słowniczek i ściąga składni dla Terraform i AWS CLI, nowe wiersze w tabeli błędów, rozszerzone listy kontrolne, nowe zasady (chmura, godziny z metryk).
+- Wersja 4: dział 11 (VPS, WireGuard, monitoring z zewnątrz, kontrola kosztów AWS, test awarii B) z ćwiczeniami, nowe wpisy w słowniczku, ściądze, listach kontrolnych i tabeli błędów, nowe zasady. Od teraz notatnik uzupełniam po każdym dziale.
