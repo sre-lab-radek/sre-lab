@@ -3,7 +3,7 @@
 Ten plik to Twoja ściąga i podręcznik z laboratorium. Rośnie po każdym dziale. Na końcu każdego działu dopisuję:
 co zrobiliśmy, na co uważać, nowe pojęcia i nowe polecenia.
 
-Wersja: 4.4 (działy 0-11 i Linux od podstaw sesja 1, stan na 9.11.2026)
+Wersja: 4.5 (działy 0-11 i Linux od podstaw sesje 1-2, stan na 9.11.2026)
 
 ## Jak czytać ten plik
 
@@ -1071,6 +1071,52 @@ Polecenie usuwające, które w końcu zadziałało (z `~/cwiczenia`): `rmdir -p 
 
 Do powtórki na początku sesji 2: ścieżki względne a bezwzględne, `w` i `x` na katalogu, prawa kluczy, spacja jako separator argumentów. Zob. też sekcje 15, 16 i 18.
 
+### Sesja 2 (9.11.2026): pliki, przekierowania, wildcardy
+
+**Co zrobiliśmy:** w `~/cwiczenia/sesja2` ćwiczyliśmy `touch`, `echo` z `>` i `>>`, `cat`, `cp`, `mv` (też jako zmianę nazwy), `rm -i`, wildcardy `*` i `?`. Rozgrzewka z odebraniem `x` (krok 4 z sesji 1) została pominięta na prośbę, uprawnienia katalogów wrócą przy okazji prawdziwego przypadku.
+
+**Kluczowe informacje**
+- `touch a b c`: tworzy puste pliki (lub odświeża datę istniejących). Prawa nowych plików (`664`) wynikają z **umask** (sesja 3).
+- `echo tekst` wypisuje swoje argumenty na ekran. **`>`** kieruje wynik do pliku i **nadpisuje** go. **`>>`** dopisuje na końcu. Przekierowanie robi powłoka przed uruchomieniem polecenia, `echo` o pliku nie wie.
+- `cat plik` wypisuje zawartość. Rozmiar sprawdzisz w `ls -l`.
+- `cp skąd dokąd`: tworzy **nowy, niezależny** plik (nowy czas). `mv skąd dokąd`: przenosi albo zmienia nazwę (ten sam plik, ten sam czas). Gdy „dokąd" to istniejący katalog, plik ląduje w środku.
+- **Wildcard** (znak wieloznaczny) rozwija powłoka **przed** uruchomieniem polecenia, tak samo jak `~`: `*` = dowolny ciąg (także pusty), `?` = dokładnie jeden znak. `*` pomija ukryte pliki (z kropką).
+- Gdy `ls` dostaje katalog jako argument, wypisuje jego zawartość (`ls -d` pokaże sam katalog).
+- `rm` nie ma kosza. Nawyk: najpierw `ls wzorzec`, dopiero potem `rm wzorzec`. `rm -i` pyta o każdy plik.
+- Klawisz **Tab** uzupełnia nazwy (dwa razy Tab pokazuje kandydatów).
+
+**Na co uważać**
+- Ścieżka względna zależy od tego, gdzie stoisz: z `dane` do `liczby.txt` dwa katalogi wyżej to `../../liczby.txt` (jedno `..` dało `No such file`).
+- `rmdir -p` dostaje ścieżkę od góry do dołu, bez `/` na początku i bez spacji w środku.
+- `w` na katalogu to tworzenie i usuwanie w środku (nie wejście). `x` na zwykłym pliku to uruchamianie (nie zmienianie).
+- Wzorzec `log?.txt` nie trafi w `log10.txt` (dwa znaki) ani `log.log`.
+
+**Polecenia:** `touch`, `echo`, `cat`, `cp`, `mv`, `rm -i`, `ls -d`, wildcardy `*` `?`, przekierowania `>` `>>`.
+
+**Gdzie szukać w notatniku:** sekcja 16 → „Pliki, przekierowania i wildcardy"; sekcja 15 → „Linux i terminal"; sekcja 18 (błędy).
+
+**Quiz sesji 2: 7/10 (70%).** Błędne: `log?.txt` a `log10.txt` (`?` to jeden znak), `r-x` dla grupy na katalogu (może wejść i patrzeć, nie zmieniać), `x` na zwykłym pliku (uruchamianie). Do powtórki na start sesji 3: `?` i `*`, `w`/`x` na plikach i katalogach, umask.
+
+**Ćwiczenia**
+1. Czym różnią się `>` i `>>`? Co stanie się z plikiem po `echo x > plik`?
+2. Stoisz w `~/cwiczenia/sesja2/archiwum`. Jak względnie wskazać `~/cwiczenia/sesja2/a.txt`?
+3. Jak jedną komendą zmienić nazwę `b.txt` na `b_stary.txt`? Co z czasem pliku?
+4. Które pliki wypisze `ls log?.txt` przy `log.log`, `log1.txt`, `log10.txt`?
+5. Dlaczego przed `rm log*` robi się `ls log*`?
+6. Co wypisze `ls a*`, gdy `a*` obejmuje katalog `archiwum`?
+7. Co daje `x` na pliku, a co `x` na katalogu?
+
+**Odpowiedzi**
+1. `>` nadpisuje (zawartość znika), `>>` dopisuje na końcu.
+2. `../a.txt`.
+3. `mv b.txt b_stary.txt`. Zostaje czas utworzenia, bo to ten sam plik. `cp` tworzy nowy plik z nowym czasem.
+4. Tylko `log1.txt` (jeden znak między `log` a `.txt`).
+5. Powłoka rozwija wzorzec na listę nazw, `ls` pokazuje ją bez ryzyka, a `rm` usuwa na stałe.
+6. `a.txt`, `a_kopia.txt` i zawartość `archiwum` (`archiwum:` i jego pliki).
+7. Na pliku: uruchamianie jako program. Na katalogu: wejście do niego.
+
+**Zadanie praktyczne:** w `~/cwiczenia` utwórz `sesja2b` z plikami `raport1.txt`, `raport2.txt`, `raport10.txt`, `notatka.log`. Zapisz przewidywanie, co wypiszą `ls raport?.txt`, `ls raport*` i `ls *.txt`, uruchom i porównaj. Skopiuj `raport1.txt` jako `raport1_kopia.txt`, dopisz do niego linię przez `>>`, usuń `raport2.txt` i `raport10.txt` przez `rm -i`, a na końcu posprzątaj całą strukturę.
+
 ---
 
 ## 15. Słowniczek
@@ -1173,6 +1219,9 @@ Do powtórki na początku sesji 2: ścieżki względne a bezwzględne, `w` i `x`
 - **root**: użytkownik, który obchodzi reguły praw. **`sudo`**: uruchomienie polecenia z prawami roota.
 - **Argument**: rzecz podana poleceniu (spacja je oddziela). **Kod wyjścia**: liczba zwracana przez polecenie (0 = sukces).
 - **`man`**: instrukcja polecenia (w środku `/fraza`, `n`, `q`).
+- **Przekierowanie**: `>` zapisuje wynik polecenia do pliku (nadpisuje), `>>` dopisuje na końcu.
+- **Wildcard (glob)**: wzorzec rozwijany przez powłokę przed uruchomieniem polecenia. `*` = dowolny ciąg, `?` = jeden znak.
+- **Uzupełnianie Tab**: klawisz Tab dopełnia nazwę pliku lub polecenia.
 
 ---
 
@@ -1341,6 +1390,18 @@ chmod 600 plik            # r=4 w=2 x=1, cyfry: właściciel grupa pozostali
 chmod u-x katalog         # u/g/o/a, + dodaje, - odbiera
 ```
 
+### Pliki, przekierowania i wildcardy (Linux)
+```bash
+touch a.txt b.txt         # puste pliki (lub odświeżenie daty)
+echo tekst > plik         # nadpisuje
+echo tekst >> plik        # dopisuje na końcu
+cat plik                  # wypisz zawartość
+cp skąd dokąd             # nowy, niezależny plik
+mv skąd dokąd             # przeniesienie albo zmiana nazwy
+ls log?.txt ; ls a* ; ls -d katalog   # ? = 1 znak, * = dowolny ciąg
+ls wzorzec ; rm -i wzorzec            # najpierw ls, potem rm
+```
+
 ### WireGuard i zapora (VPS)
 ```bash
 wg genkey | tee priv | wg pubkey > pub     # para kluczy (priv zostaje na maszynie)
@@ -1434,6 +1495,9 @@ Po sesji w chmurze:
 | `No such file or directory` przy ścieżce względnej | stoisz w innym katalogu, niż myślisz | `pwd`, użyj `..` albo ścieżki od `~` |
 | `rmdir: Directory not empty` | w katalogu coś jest (także podkatalog) | `ls -Ra katalog`, usuń od najgłębszego |
 | `Is a directory` po wpisaniu ścieżki | wpisana sama ścieżka zamiast `cd ścieżka` | `cd ścieżka` |
+| `No such file or directory` przy ścieżce względnej | za mało albo za dużo `..`, albo inne miejsce niż myślisz | `pwd`, policz kroki w górę |
+| plik „zniknął” po `echo x > plik` | `>` nadpisuje całą zawartość | `>>` do dopisywania, ważne pliki najpierw skopiuj |
+| wildcard trafił w więcej plików niż miał | `*` obejmuje też to, czego nie chciałeś | najpierw `ls wzorzec`, potem `rm -i` |
 | `man`: `pattern not found` | takiej frazy nie ma w tej wersji instrukcji | inne słowo albo eksperyment |
 | godzina w Prometheusie o 1 h inna niż lokalna | UTC zamiast czasu lokalnego | dodaj 1 h (zima) lub 2 h (lato) |
 
@@ -1443,7 +1507,7 @@ Po sesji w chmurze:
 
 | Etap planu | Status |
 |---|---|
-| Python, Bash, Git, sieci (etap 1) | Linux od podstaw: sesja 1 z 8 zrobiona (ścieżki, katalogi, prawa). Do zrobienia: sesje 2-8, potem sieci i Python |
+| Python, Bash, Git, sieci (etap 1) | Linux od podstaw: sesje 1-2 z 8 zrobione (ścieżki, katalogi, prawa; pliki, przekierowania, wildcardy). Do zrobienia: sesje 3-8, potem sieci i Python |
 | Docker, Terraform, AWS (etap 2) | Docker zrobiony. Terraform i AWS zrobione w podstawach (VPC, EC2, ALB, destroy). Do zrobienia: zdalny stan (S3), moduły, IAM z minimalnymi uprawnieniami |
 | CI/CD i obserwowalność (etap 3) | zrobione w wersji lokalnej (Prometheus, Grafana, Alertmanager, CI, CD) |
 | Kubernetes (etap 4) | tylko test w kind. Do zrobienia |
@@ -1471,3 +1535,4 @@ Najbliższe kroki:
 - Wersja 4.2: wynik quizu z 29–30.10 (8/10) i sekcja „Do powtórki" w dziale 11 (SSH first match wins, `hour()` w UTC).
 - Wersja 4.3: dział 14 (Linux od podstaw, sesja 1: ścieżki, katalogi, prawa, zapis liczbowy `chmod`) z planem 8 sesji i ćwiczeniami, słowniczek, ściąga, tabela błędów. Numeracja: Słowniczek 15, Ściąga 16, Lista kontrolna 17, Błędy 18, Status 19, Historia 20.
 - Wersja 4.4: wynik zadania praktycznego i quizu z sesji 1 (6/10), błędy przy `rmdir -p`, lista do powtórki na start sesji 2.
+- Wersja 4.5: Linux sesja 2 (pliki, przekierowania `>` `>>`, `cp`/`mv`/`rm -i`, wildcardy `*` `?`), quiz 7/10, słowniczek, ściąga, tabela błędów, status planu.
