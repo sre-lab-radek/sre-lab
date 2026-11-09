@@ -3,7 +3,7 @@
 Ten plik to Twoja ściąga i podręcznik z laboratorium. Rośnie po każdym dziale. Na końcu każdego działu dopisuję:
 co zrobiliśmy, na co uważać, nowe pojęcia i nowe polecenia.
 
-Wersja: 4.2 (działy 0-11 z ćwiczeniami, stan na 30.10.2026)
+Wersja: 4.4 (działy 0-11 i Linux od podstaw sesja 1, stan na 9.11.2026)
 
 ## Jak czytać ten plik
 
@@ -950,7 +950,130 @@ aws ce get-cost-and-usage --time-period Start=2026-10-29,End=2026-10-30 --granul
 
 ---
 
-## 14. Słowniczek
+## 14. Linux od podstaw – sesja 1: ścieżki, katalogi, prawa
+
+Nowy tryb nauki (od 4.11.2026): uczysz się od podstaw, sam piszesz polecenia, pytasz dużo, a ja omawiam Twoje próby. Ćwiczysz w katalogu `~/cwiczenia` na sre-lab, nie na VPS.
+
+### Plan ścieżki Linux (ok. 8 sesji po godzinie)
+| # | Temat | Połączenie z labem |
+|---|---|---|
+| 1 | Gdzie jestem i co tu jest: `pwd`, `ls`, `cd`, ścieżki, prawa (**zrobione**) | `~/deploy`, `/etc`, `~/.ssh` |
+| 2 | Pliki: tworzenie, kopiowanie, przenoszenie, usuwanie, wildcards | przenoszenie plików do `~/sre-lab` |
+| 3 | Użytkownicy i uprawnienia (pogłębienie): `chown`, grupy, `umask` | `~/.secrets`, `chown 65534` |
+| 4 | Tekst i potoki: `grep`, `sort`, `uniq`, `wc`, `\|`, `>` | analiza logów SSH |
+| 5 | Procesy i usługi: `ps`, `kill`, `systemctl`, `journalctl` | `wg-quick@wg0`, fail2ban |
+| 6 | Dysk i pamięć: `df`, `du`, `free` | swap na VPS |
+| 7 | Sieć w terminalu: `ip`, `ss`, `ping` | tunel, `ufw` |
+| 8 | Skrypty Bash: zmienne, `if`, `for`, kod wyjścia | czytanie `pull-deploy.sh` |
+
+Zadanie końcowe całej ścieżki: wytłumaczyć własnymi słowami `pull-deploy.sh` linia po linii.
+
+### Co zrobiliśmy w sesji 1
+Pięć pytań diagnostycznych (wynik: dwa razy „nie wiem", reszta częściowo poprawna), potem ćwiczenia: ścieżki, ukryte pliki, tworzenie i usuwanie katalogów, czytanie praw (`rwx`), zapis liczbowy `chmod`.
+
+### Kluczowe informacje
+- **`~`** to katalog domowy zalogowanego użytkownika (`/home/radek`). Powłoka podmienia go **zanim** uruchomi polecenie.
+- **Ścieżka bezwzględna** zaczyna się od `/` (od korzenia). **Względna** zaczyna się od nazwy i jest liczona od miejsca, w którym stoisz (`pwd`). Reguła: `/...` = od korzenia, `~/...` = od domu, `nazwa` = od bieżącego katalogu.
+- **`.`** to katalog bieżący, **`..`** to katalog nadrzędny. Każdy katalog ma oba wpisy. `ls -a` je pokazuje. Plik lub katalog z kropką na początku nazwy jest **ukryty** (zwykłe `ls` go pomija).
+- **`cd`** bez argumentu i `cd ~` wracają do domu. `cd -` wraca do poprzednio odwiedzonego katalogu. `cd ..` idzie do nadrzędnego.
+- Wpisanie **samej ścieżki** nie wchodzi do katalogu, tylko próbuje ją uruchomić (`Is a directory`). Do wchodzenia służy `cd`.
+- **Spacja oddziela argumenty**, `/` oddziela poziomy ścieżki. Polecenie przyjmuje listę ścieżek i bierze je po kolei od lewej.
+- **`mkdir -p a/b/c`** tworzy cały łańcuch i nie zgłasza błędu, jeśli katalog już istnieje.
+- **`rmdir`** usuwa **tylko puste** katalogi, więc jest bezpieczne. **`rmdir -p a/b/c`** po usunięciu `c` wspina się w górę i usuwa też `b` i `a`, o ile są puste (zatrzyma się na pierwszym niepustym). **`rm -r`** kasuje zawartość bez pytania i wymaga dużej ostrożności.
+- **Prawa w `ls -l`:** `d` lub `-` (typ), potem trzy trójki: **właściciel, grupa, pozostali**. W trójce: `r` odczyt, `w` zapis, `x` wykonanie, `-` brak.
+- **`x` przy pliku** = uruchomienie jako program. **`x` przy katalogu** = wejście do środka (`cd`) i dostęp do plików w nim. **`w` przy katalogu** = tworzenie i usuwanie plików w środku. Katalog bez `x` to zamknięte drzwi (`Permission denied` przy `cd`).
+- **Zapis liczbowy:** `r` = 4, `w` = 2, `x` = 1, cyfra to suma. Trzy cyfry = właściciel, grupa, pozostali. `7` = `rwx`, `6` = `rw-`, `5` = `r-x`, `4` = `r--`, `0` = `---`.
+  - `600` = `-rw-------` (klucz prywatny, `authorized_keys`, `config`).
+  - `644` = `-rw-r--r--` (klucz publiczny `.pub`).
+  - `700` = `drwx------` (katalog `.ssh`).
+  - `640` = `-rw-r-----`.
+- **Zapis symboliczny:** `u` (właściciel), `g` (grupa), `o` (pozostali), `a` (wszyscy); `+` dodaje, `-` odbiera, `=` ustawia. Np. `chmod u-x plik`.
+- Właściciel działa w swoich plikach według reguł i może je zmienić. **root** obchodzi reguły wszędzie. Prawa dotyczą kategorii, do której należysz: w `/cwiczenia` (własność roota) radek był „pozostałym" z `r-x` i nie mógł nic zapisać.
+- **`sudo`** daje uprawnienia roota. Nie wpisuj go „na wszelki wypadek": root nie ma hamulców, a pliki utworzone przez `sudo` należą do roota i potem przeszkadzają.
+- Klucze prywatne muszą mieć `600`. SSH odmawia użycia klucza z za szerokimi prawami (`UNPROTECTED PRIVATE KEY FILE`).
+
+### Na co uważać
+- **Ukośnik na początku ścieżki.** `/cwiczenia` to katalog w korzeniu systemu, a nie w domu. Skutek: `Permission denied`, a po `sudo` powstał katalog roota w `/`. Przed każdym usuwaniem zapytaj: od czego zaczyna się ta ścieżka?
+- Komunikat `Permission denied` przy złej ścieżce to wskazówka, że to nie jest miejsce dla Ciebie. Najpierw czytaj błąd, potem sięgaj po `sudo`.
+- `ls -ld` bez argumentu pokazuje **bieżący** katalog (`.`). Do obejrzenia innego podaj jego nazwę.
+- Przy `rmdir` wymieniaj ścieżki od najgłębszej. Bez `-p` każdy poziom trzeba podać osobno.
+- Przed usunięciem **obejrzyj**, co jest w środku (`ls -Ra katalog`).
+- Gdy `man` nie ma szukanej frazy (`pattern not found`), spróbuj innego słowa albo odkryj regułę eksperymentem.
+- Dokumentacja bywa niepełna: w `man chmod` na tym systemie nie było opisu trybu liczbowego. Doświadczenie (`chmod 400`, `200`, `100` i `ls -l`) dało tę samą odpowiedź.
+
+### Polecenia
+```bash
+pwd                     # gdzie jestem
+ls -la                  # lista ze szczegółami i ukrytymi
+ls -ld katalog          # prawa samego katalogu (nie zawartości)
+ls -Ra katalog          # rekurencyjnie, z ukrytymi
+cd ~  |  cd  |  cd ..  |  cd -
+mkdir -p ~/cwiczenia/x/y/z
+rmdir x/y/z x/y x       # od najgłębszego
+rmdir -p x/y/z
+chmod 600 plik          # zapis liczbowy
+chmod u-x katalog       # zapis symboliczny
+man polecenie           # w man: /fraza, n, q
+```
+
+### Gdzie szukać w notatniku
+- Prawa i `chmod`: sekcja 16 (Ściąga) → Bash i podsekcja „Katalogi, ścieżki i prawa"; sekcja 13 (Dział 11) → „Sekrety".
+- Klucze SSH: sekcja 2 (Dział 0).
+- Słowniczek: sekcja 15, podsekcja „Linux i terminal".
+
+### Ćwiczenia (sprawdź siebie)
+
+**Pytania**
+
+1. Co oznacza `~/sre-lab` i do jakiej ścieżki bezwzględnej się rozwija?
+2. Czym różni się `/etc/ssh` od `etc/ssh`?
+3. Stoisz w `~/cwiczenia/sesja1`. Jak przejść do `~/cwiczenia` na trzy sposoby?
+4. Co robi `ls -a` i dlaczego zwykłe `ls` nie pokazuje `.ssh`?
+5. Odczytaj `drwxr-x---`: typ, prawa właściciela, grupy i pozostałych.
+6. Dlaczego plik klucza prywatnego nie ma `x`, a katalog `.ssh` ma?
+7. Zamień `-rw-r-----` na liczby, a `755` na litery.
+8. Dlaczego `mkdir /cwiczenia` kończy się `Permission denied`, a `mkdir ~/cwiczenia` nie?
+9. Czym różni się `rmdir -p a/b/c` od `rm -r a`?
+10. Dlaczego klucz publiczny może mieć `644`, a prywatny musi mieć `600`?
+
+**Odpowiedzi**
+
+1. `~` to katalog domowy (`/home/radek`), więc `/home/radek/sre-lab`. Podmienia go powłoka przed uruchomieniem polecenia.
+2. `/etc/ssh` jest ścieżką bezwzględną (od korzenia), działa z każdego miejsca. `etc/ssh` jest względna: katalog `etc` w miejscu, w którym stoisz.
+3. `cd ..`, `cd ~/cwiczenia`, `cd /home/radek/cwiczenia` (także `cd -`, jeśli przed chwilą tam byłeś).
+4. Pokazuje także ukryte wpisy (`.`, `..`, pliki z kropką). `.ssh` zaczyna się od kropki, więc jest ukryty.
+5. `d` katalog. Właściciel `rwx`, grupa `r-x`, pozostali `---`.
+6. Plik klucza to dane, a nie program, więc `x` jest zbędne. Katalog potrzebuje `x`, bo bez niego nie da się do niego wejść ani dostać do plików w środku.
+7. `-rw-r-----` to `640`. `755` to `rwxr-xr-x`.
+8. `/cwiczenia` to katalog w korzeniu `/`, gdzie właścicielem jest root, a zwykły użytkownik nie ma prawa zapisu. `~/cwiczenia` jest w domu radka, który jest tam właścicielem i ma `rwx`.
+9. `rmdir -p a/b/c` usuwa tylko **puste** katalogi, od `c` w górę, i zatrzymuje się na niepustym. `rm -r a` kasuje cały katalog z zawartością bez pytania.
+10. Klucz publiczny służy tylko do wklejenia na serwer i sam niczego nie daje. Klucz prywatny jest dowodem tożsamości: kto go odczyta, zaloguje się jako Ty, a SSH odmawia użycia klucza z za szerokimi prawami.
+
+**Zadanie praktyczne:** w `~/cwiczenia` utwórz jednym poleceniem strukturę `projekt/dane/surowe` i `projekt/dane/gotowe`. Ustaw `projekt` na `700`, a `projekt/dane` na `750`. Sprawdź prawa (`ls -ld`). Potem spróbuj wejść do `projekt`, odbierając sobie `x` (przewidź wynik), przywróć prawa i usuń całą strukturę bezpiecznie, bez `rm -r`, w jednej linii (`rmdir`, od najgłębszego). Na koniec sprawdź `ls ~/cwiczenia`.
+
+### Wynik zadania praktycznego i quizu (sesja 1, 4.11 i 9.11.2026)
+
+**Zadanie:** kroki 1-3 i 5 zrobione, krok 4 (odebranie `x` katalogowi i próba wejścia) pominięty, do wykonania na początku sesji 2.
+Polecenie usuwające, które w końcu zadziałało (z `~/cwiczenia`): `rmdir -p projekt/dane/surowe projekt/dane/gotowe`. Jeden komunikat "Directory not empty" przy dojściu do `cwiczenia` jest tu **oczekiwany**.
+
+**Błędy przy usuwaniu (cztery próby), do zapamiętania:**
+1. Ścieżka zawsze **od góry do dołu** (`projekt/dane/surowe`), nigdy odwrotnie. `rmdir -p` sam idzie w górę.
+2. Argumenty rozdziela **jedna spacja**, poziomy ścieżki rozdziela `/`. Spacja w środku ścieżki robi z niej dwa argumenty.
+3. `/` na początku to korzeń systemu, a nie bieżący katalog.
+4. `a && b`: gdy `a` zgłosi błąd, `b` w ogóle się nie uruchomi. Przy `rmdir -p` z dwoma gałęziami lepiej dać oba argumenty w jednej komendzie.
+5. Zacznij od `pwd`: ścieżki względne liczą się od miejsca, w którym stoisz.
+
+**Quiz 10 pytań: 6/10 (60%).** Błędne:
+- Ścieżka względna a bezwzględna: z `~/cwiczenia/projekt/dane` do `surowe` wystarczy `cd surowe`, a nie `cd /surowe`.
+- `w` na **katalogu** to tworzenie, usuwanie i zmiana nazw wpisów w środku, a nie wejście (to robi `x`).
+- Klucz prywatny SSH: `600` (nie `644`; `644` jest dla `.pub`).
+- `rmdir cwiczenia/ /surowe`: spacja rozdziela argumenty, więc są **dwa** argumenty, a nie błąd składni.
+
+Do powtórki na początku sesji 2: ścieżki względne a bezwzględne, `w` i `x` na katalogu, prawa kluczy, spacja jako separator argumentów. Zob. też sekcje 15, 16 i 18.
+
+---
+
+## 15. Słowniczek
 
 ### Podstawy SRE
 - **SRE** (Site Reliability Engineering): podejście do utrzymania niezawodności usług przez inżynierię (automatyzacja, pomiary, cele).
@@ -1041,9 +1164,19 @@ aws ce get-cost-and-usage --time-period Start=2026-10-29,End=2026-10-30 --granul
 - **Cost Explorer**: usługa AWS z kosztami (API: `aws ce get-cost-and-usage`).
 - **RPO / RTO**: ile danych możesz stracić / jak szybko musisz wrócić do działania. **Reguła 3-2-1**: 3 kopie, 2 nośniki, 1 poza miejscem.
 
+### Linux i terminal
+- **Ścieżka bezwzględna / względna**: od korzenia `/` / od bieżącego katalogu. **`~`**: katalog domowy. **`.`** / **`..`**: bieżący / nadrzędny.
+- **Ukryty plik**: nazwa zaczyna się od kropki (`ls -a`).
+- **Potok (pipe, `|`)**: wynik polecenia po lewej staje się wejściem polecenia po prawej.
+- **Właściciel, grupa, pozostali (u, g, o)**: trzy kategorie praw. **`rwx`**: odczyt, zapis, wykonanie (przy katalogu: wejście).
+- **Tryb liczbowy**: `r`=4, `w`=2, `x`=1, trzy cyfry (np. `640`).
+- **root**: użytkownik, który obchodzi reguły praw. **`sudo`**: uruchomienie polecenia z prawami roota.
+- **Argument**: rzecz podana poleceniu (spacja je oddziela). **Kod wyjścia**: liczba zwracana przez polecenie (0 = sukces).
+- **`man`**: instrukcja polecenia (w środku `/fraza`, `n`, `q`).
+
 ---
 
-## 15. Ściąga składni
+## 16. Ściąga składni
 
 ### YAML
 ```yaml
@@ -1197,6 +1330,17 @@ aws configure
 aws sts get-caller-identity
 ```
 
+### Katalogi, ścieżki i prawa (Linux)
+```bash
+pwd ; ls -la ; ls -ld katalog ; ls -Ra katalog
+cd ~ ; cd ; cd .. ; cd -
+mkdir -p a/b/c            # cały łańcuch
+rmdir a/b/c a/b a         # tylko puste, od najgłębszego
+rmdir -p a/b/c            # w górę, dopóki puste
+chmod 600 plik            # r=4 w=2 x=1, cyfry: właściciel grupa pozostali
+chmod u-x katalog         # u/g/o/a, + dodaje, - odbiera
+```
+
 ### WireGuard i zapora (VPS)
 ```bash
 wg genkey | tee priv | wg pubkey > pub     # para kluczy (priv zostaje na maszynie)
@@ -1222,7 +1366,7 @@ aws ce get-cost-and-usage --time-period Start=2026-10-29,End=2026-10-30 \
 
 ---
 
-## 16. Lista kontrolna "przed commitem" i "po zmianie konfiguracji"
+## 17. Lista kontrolna "przed commitem" i "po zmianie konfiguracji"
 
 Przed commitem:
 1. `git status` – czy na liście nie ma sekretów (`secrets/`, tokeny, klucze)?
@@ -1256,7 +1400,7 @@ Po sesji w chmurze:
 
 ---
 
-## 17. Typowe błędy z tego laba (tabela diagnostyczna)
+## 18. Typowe błędy z tego laba (tabela diagnostyczna)
 
 | Objaw | Najczęstsza przyczyna | Co zrobić |
 |---|---|---|
@@ -1286,15 +1430,20 @@ Po sesji w chmurze:
 | Telegram dostaje alert później niż prognoza | `for` + `evaluation_interval` + `group_wait` się sumują | zmierz, zapisz hipotezę, ustaw krótszy `evaluation_interval` |
 | Resolved przychodzi po ok. 5 min | domyślny `group_interval` | świadomie ustaw lub zaakceptuj |
 | Mac nie widzi 10.8.0.2 | w tunelu są tylko VPS i sre-lab | wejdź przez `ssh ovh` lub dodaj Maca jako peera |
+| `Permission denied` przy `mkdir` / `cd` | ścieżka z `/` na początku wskazuje korzeń (własność roota) albo katalog bez `x` | sprawdź początek ścieżki, `ls -ld katalog`, zmień prawa |
+| `No such file or directory` przy ścieżce względnej | stoisz w innym katalogu, niż myślisz | `pwd`, użyj `..` albo ścieżki od `~` |
+| `rmdir: Directory not empty` | w katalogu coś jest (także podkatalog) | `ls -Ra katalog`, usuń od najgłębszego |
+| `Is a directory` po wpisaniu ścieżki | wpisana sama ścieżka zamiast `cd ścieżka` | `cd ścieżka` |
+| `man`: `pattern not found` | takiej frazy nie ma w tej wersji instrukcji | inne słowo albo eksperyment |
 | godzina w Prometheusie o 1 h inna niż lokalna | UTC zamiast czasu lokalnego | dodaj 1 h (zima) lub 2 h (lato) |
 
 ---
 
-## 18. Status planu nauki i co dalej
+## 19. Status planu nauki i co dalej
 
 | Etap planu | Status |
 |---|---|
-| Python, Bash, Git, sieci (etap 1) | Bash i Git używane praktycznie. Python i sieci jeszcze do zrobienia |
+| Python, Bash, Git, sieci (etap 1) | Linux od podstaw: sesja 1 z 8 zrobiona (ścieżki, katalogi, prawa). Do zrobienia: sesje 2-8, potem sieci i Python |
 | Docker, Terraform, AWS (etap 2) | Docker zrobiony. Terraform i AWS zrobione w podstawach (VPC, EC2, ALB, destroy). Do zrobienia: zdalny stan (S3), moduły, IAM z minimalnymi uprawnieniami |
 | CI/CD i obserwowalność (etap 3) | zrobione w wersji lokalnej (Prometheus, Grafana, Alertmanager, CI, CD) |
 | Kubernetes (etap 4) | tylko test w kind. Do zrobienia |
@@ -1312,7 +1461,7 @@ Najbliższe kroki:
 
 ---
 
-## 19. Historia zmian notatnika
+## 20. Historia zmian notatnika
 
 - Wersja 1: działy 0-9 (środowisko, Docker i kind, KVM, Ansible, monitoring, SLO, Alertmanager, load balancer, CI, CD), słowniczek, ściąga składni, tabela błędów.
 - Wersja 2: ćwiczenia (pytania, odpowiedzi, zadanie praktyczne) na końcu każdego działu. Notatnik trzymany w repozytorium (`notes/`).
@@ -1320,3 +1469,5 @@ Najbliższe kroki:
 - Wersja 4: dział 11 (VPS, WireGuard, monitoring z zewnątrz, kontrola kosztów AWS, test awarii B) z ćwiczeniami, nowe wpisy w słowniczku, ściądze, listach kontrolnych i tabeli błędów, nowe zasady. Od teraz notatnik uzupełniam po każdym dziale.
 - Wersja 4.1: test D rollbacku (zepsuty cel `localhost:9999`) w dziale 9: wyniki, fałszywy alert po rollbacku (hipoteza 1 wspierana), nowe ćwiczenia 10-12, pętla logująca, nowe pojęcia (stale marker, lookback, seria `ALERTS`), wiersze w tabeli błędów.
 - Wersja 4.2: wynik quizu z 29–30.10 (8/10) i sekcja „Do powtórki" w dziale 11 (SSH first match wins, `hour()` w UTC).
+- Wersja 4.3: dział 14 (Linux od podstaw, sesja 1: ścieżki, katalogi, prawa, zapis liczbowy `chmod`) z planem 8 sesji i ćwiczeniami, słowniczek, ściąga, tabela błędów. Numeracja: Słowniczek 15, Ściąga 16, Lista kontrolna 17, Błędy 18, Status 19, Historia 20.
+- Wersja 4.4: wynik zadania praktycznego i quizu z sesji 1 (6/10), błędy przy `rmdir -p`, lista do powtórki na start sesji 2.
