@@ -9,6 +9,8 @@ The full learning log (history, decisions, mistakes, quizzes) lives in
 [`notes/sre-lab-notatnik.md`](notes/sre-lab-notatnik.md). It is written in Polish.
 Some postmortems are in English, some in Polish (marked below).
 
+Highlights: KVM + Ansible lab with rolling patching · Prometheus/Alertmanager with SLO error budgets · CI that blocks broken alert rules · pull-based CD with automatic rollback (63 s) · the same lab rebuilt in AWS with Terraform · external monitoring from a VPS over WireGuard
+
 ## Environment
 
 | Part | What it is | Used for |
