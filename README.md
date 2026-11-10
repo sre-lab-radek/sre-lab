@@ -15,7 +15,7 @@ Highlights: KVM + Ansible lab with rolling patching · Prometheus/Alertmanager w
 
 | Part | What it is | Used for |
 |---|---|---|
-| Home PC | Ubuntu Server on its own SATA disk (dual boot with Windows), i5-12700K, 32 GB RAM | KVM hypervisor for the lab VMs, Docker host for the monitoring stack, Ansible and Terraform control node. Switched off at night. |
+| Home PC | Ubuntu Server on its own SATA disk (dual boot with Windows), i5-12600K, 32 GB RAM | KVM hypervisor for the lab VMs, Docker host for the monitoring stack, Ansible and Terraform control node. Switched off at night. |
 | Lab VMs | KVM/libvirt guests from the Ubuntu 24.04 cloud image, configured by cloud-init | `web1`, `web2` (nginx), `db1` (PostgreSQL), `lb1` (nginx load balancer) |
 | Laptop | MacBook, SSH client only | editor (VS Code Remote-SSH), terminal, browser |
 | VPS | small Ubuntu VPS (OVHcloud), runs 24/7 | external monitoring of the home PC over a WireGuard tunnel, daily AWS cost check |
