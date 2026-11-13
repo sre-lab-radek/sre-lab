@@ -3,7 +3,7 @@
 Ten plik to Twoja ściąga i podręcznik z laboratorium. Rośnie po każdym dziale. Na końcu każdego działu dopisuję:
 co zrobiliśmy, na co uważać, nowe pojęcia i nowe polecenia.
 
-Wersja: 4.8 (działy 0-11, Linux od podstaw sesje 1-3 i nowy serwer sre-labs, stan na 13.11.2026)
+Wersja: 4.9 (działy 0-11, Linux od podstaw sesje 1-3, nowy serwer sre-labs i odbudowa lab2, stan na 13.11.2026)
 
 ## Jak czytać ten plik
 
@@ -1007,6 +1007,34 @@ aws ce get-cost-and-usage --time-period Start=2026-10-29,End=2026-10-30 --granul
 
 **Zadanie praktyczne:** dopisz na Windowsie w `C:\Users\<nazwa>\.ssh\config` wpis `Host sre-labs` (`HostName 192.168.100.127`, `User radek`, `IdentityFile ~/.ssh/id_ed25519`) przez `Set-Content -Encoding ascii` (bez Notatnika) i sprawdź `ssh sre-labs`.
 
+### Odbudowa `lab2` na `sre-labs` i GitHub przez SSH (13.11.2026)
+
+**Co zrobiliśmy:**
+- **GitHub przez SSH:** klucz wdrożeniowy (deploy key) z prawem zapisu tylko do jednego repo (`~/.ssh/github_sre_labs`, 600), blok `Host github.com` w `~/.ssh/config` z `IdentitiesOnly yes`, `ssh -T git@github.com` odpowiada nazwą **repozytorium**. Odcisk serwera GitHuba (ED25519 `SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU`) sprawdzony po fakcie w dokumentacji GitHuba (`ssh-keygen -lF github.com`). Remote przestawiony poleceniem `git remote set-url origin git@github.com:sre-lab-radek/sre-lab.git`, push v4.8 (`377247b..d220cca`).
+- **Przegląd bezpieczeństwa `lab2`:** wszystkie usługi mają `network_mode: host`, więc nie ma `ports:`, a jedyną barierą jest `ufw`. `--web.enable-lifecycle` udostępnia `/-/reload` i `/-/quit` bez logowania. Token jest w `bot_token_file:` (poza repo), historia Gita czysta (`git log --all --oneline -S"bot_token:"` nic nie zwróciło). Numer `chat_id` zostaje w publicznym repo: decyzja użytkownika (niskie ryzyko bez tokena, bez przepisywania historii).
+- **Sekret na miejscu:** `lab2/secrets/` (700), `telegram_token` skopiowany z `~/przenosiny` (`cp`, nie `mv`) z uprawnieniami **644**, bo proces Alertmanagera w kontenerze działa jako `nobody` (czyli `others`). Dostępu innych użytkowników serwera broni katalog 700, a przed Gitem `.gitignore` (linia 8, `lab2/secrets/`).
+- **Nasłuch tylko lokalny:** Prometheus `--web.listen-address=127.0.0.1:9090`, Alertmanager `127.0.0.1:9093`, Blackbox `127.0.0.1:9115`, Grafana `GF_SERVER_HTTP_ADDR=127.0.0.1`. Weryfikacja `sudo ss -tlnp` (kolumna `Local Address`).
+- **Start w dwóch krokach:** najpierw Prometheus, Grafana i Blackbox **bez Alertmanagera** (`sudo docker compose -f lab2/docker-compose.yml up -d prometheus grafana blackbox`), żeby martwe cele nie zalały Telegrama. Interfejsy przez tunel SSH (`ssh -L 9090:127.0.0.1:9090 -L 3000:127.0.0.1:3000 sre-labs`).
+- **Sprzątanie celów:** usunięte joby `nodes`, `blackbox-http` i `blackbox-lb` (adresy `192.168.122.x` nie istnieją), `promtool check config` (5 reguł), `curl -X POST http://127.0.0.1:9090/-/reload`. Alerty zniknęły po około 6 minutach, bo stare serie zostają widoczne do 5 minut (lookback).
+- **Higiena repo:** `git diff --check`, `sed -i 's/[[:space:]]*$//' plik`, `head -n N plik > nowy` i dopiero `cp nowy plik`, commit `eac8f98` (`d220cca..eac8f98`), dodawane tylko nazwane pliki.
+
+**Na co uważać:**
+- Dodanie `command:` usłudze **zastępuje** domyślne argumenty obrazu, więc trzeba powtórzyć `--config.file` i resztę (Alertmanager i Blackbox).
+- Flagi różnią się między programami: Alertmanager ma `--storage.path` (nie `--storage.tsdb.path`) i nie zna `--web.enable-lifecycle`.
+- `docker compose config --quiet` sprawdza tylko składnię, a flagi weryfikują dopiero logi kontenera.
+- Brakująca ścieżka pliku w `volumes:` powoduje, że Docker tworzy **katalog** (właściciel root). Plik tokena musi istnieć przed `up`.
+- `>` czyści plik przed odczytem, więc nigdy `head ... > ten_sam_plik`.
+- `chmod` chroni przed użytkownikami serwera, `.gitignore` przed wysłaniem do GitHuba (Git śledzi tylko bit wykonywalności).
+- Błąd ze ścieżką względną: stanie w `~/sre-lab/lab2` i podanie `lab2/prometheus.yml` szuka `lab2/lab2/...`.
+
+**Polecenia:** `ssh-keygen -lF`, `ssh -T git@github.com`, `git remote -v`, `git remote set-url`, `git log -S`, `git diff --check`, `git check-ignore -v`, `sed -i 's/.../.../'`, `sed -n 'A,Bp'`, `sed -i 'Nd'`, `head -n`, `cat -n`, `cat -A`, `cut -d= -f1`, `ss -tlnp`, `docker compose ... up -d USLUGA`, `docker compose ... exec USLUGA promtool check config`, `docker compose ... logs --tail`.
+
+**Wynik quizu (13.11.2026): 6/10.** Błędne pytania: 2 (`config --quiet` sprawdza tylko składnię), 6 (Docker tworzy katalog dla brakującego pliku), 7 (`>` na ten sam plik zostawia pusty plik), 10 (`umask 0027` daje 640 dla pliku i 750 dla katalogu, trzeci raz błąd z umask: liczymy cyfra po cyfrze od 666 i od 777).
+
+**Do powtórki na start następnej sesji:** umask (0027, 0077), `x` na katalogu, kolumna `Local Address` w `ss`.
+
+**Zostało do zrobienia:** uruchomienie Alertmanagera i test wysyłki na Telegram, nowy peer WireGuard dla `sre-labs` (nowa para kluczy, stary peer 10.8.0.2 wyłączony), monitoring VPS z poprawioną regułą `SreLabUnreachable`, pozostałe laby po jednym, sesja 4 z Linuxa (tekst i potoki).
+
 ---
 
 ## 14. Linux od podstaw – sesja 1: ścieżki, katalogi, prawa
@@ -1660,3 +1688,4 @@ Najbliższe kroki:
 - Wersja 4.6: dostęp do VPS z Windowsa (osobna para kluczy, `authorized_keys`, `config` w PowerShellu), wyłączenie monitoringu VPS, uwaga o grupie `docker`.
 - Wersja 4.7: Linux sesja 3 (`w` i `x`, właściciel i grupa w `ls -l`, `id`, `chgrp`, `umask`), quiz 9/10, słowniczek, ściąga, tabela błędów, status planu.
 - Wersja 4.8: nowy serwer domowy `sre-labs` (prawa do sekretów, SSH tylko kluczem, `ufw`, automatyczne aktualizacje, decyzja o `fail2ban`), quiz 9/10, plan migracji labów.
+- Wersja 4.9: GitHub przez SSH (deploy key), przegląd i odbudowa `lab2` na `sre-labs` (sekret w `lab2/secrets/`, nasłuch tylko na `127.0.0.1`, sprzątanie martwych celów, `promtool` i reload), higiena repo (`git diff --check`, `sed`, `head`), quiz 6/10.
