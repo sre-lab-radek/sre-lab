@@ -3,7 +3,7 @@
 Ten plik to Twoja ściąga i podręcznik z laboratorium. Rośnie po każdym dziale. Na końcu każdego działu dopisuję:
 co zrobiliśmy, na co uważać, nowe pojęcia i nowe polecenia.
 
-Wersja: 4.5 (działy 0-11 i Linux od podstaw sesje 1-2, stan na 9.11.2026)
+Wersja: 4.8 (działy 0-11, Linux od podstaw sesje 1-3 i nowy serwer sre-labs, stan na 13.11.2026)
 
 ## Jak czytać ten plik
 
@@ -948,6 +948,65 @@ aws ce get-cost-and-usage --time-period Start=2026-10-29,End=2026-10-30 --granul
 
 **Zadanie praktyczne:** na VPS ustaw w `prometheus.yml` `evaluation_interval: 15s`, sprawdź `promtool check config`, przeładuj przez `/-/reload`. Zapisz prognozę czasu powiadomienia, powtórz test B z zapisem godzin i porównaj z wynikiem 6,4–7,3 min. Wynik dopisz do postmortemu.
 
+### Dostęp do VPS z Windowsa (9.11.2026)
+
+**Cel:** wejść na VPS także z Windowsa (ten sam PC co sre-lab, drugi system). **Zasada:** klucz prywatny nie opuszcza swojej maszyny. Windows dostaje **własną parę kluczy**, a na VPS trafia tylko jej część publiczna. Dzięki temu każdy klucz można odciąć osobno (usunięciem jego linii z `~/.ssh/authorized_keys`).
+
+**Kroki**
+1. [WIN, PowerShell] `ssh-keygen -t ed25519 -C "radek-windows"` (domyślna ścieżka `C:\Users\<nazwa>\.ssh\`, ustaw passphrase). Powstają `id_ed25519` (prywatny) i `id_ed25519.pub` (publiczny).
+2. Przeniesienie klucza publicznego do Linuksa: jedna linia `ssh-ed25519 ... radek-windows`. W naszym przypadku odczytana z Linuksa z zamontowanej tylko do odczytu partycji NTFS (`sudo mount -o ro /dev/nvme0n1p3 /mnt/win`, potem `sudo umount /mnt/win`). Można też wkleić ją do czatu, bo jest publiczna.
+3. [sre-lab] `ssh ovh`, a na VPS `echo 'LINIA_KLUCZA' >> ~/.ssh/authorized_keys` (**`>>`**, nie `>`, bo `>` skasowałoby pozostałe klucze). Kontrola: `wc -l`, `ls -l` (ma być `-rw-------`).
+4. [WIN] `ssh ubuntu@ADRES_IP`. Przy pierwszym połączeniu porównaj odcisk serwera z tym, który zna sre-lab (`ssh-keygen -lF ADRES_IP`), dopiero potem `yes`.
+5. [WIN] plik `C:\Users\<nazwa>\.ssh\config` z wpisem `Host ovh` (HostName, User ubuntu, IdentityFile ~/.ssh/id_ed25519, keepalive). Zapisany przez `Set-Content -Encoding ascii`.
+
+**Na co uważać**
+- Wcześniej loginy na VPS były tylko z sre-lab (Mac nie ma aliasu ani klucza). Bez żadnego działającego dostępu nie da się dodać nowego klucza, bo logowanie hasłem jest wyłączone.
+- Notatnik zapisał `config` jako `config.txt` o długości 0 (pusty plik). Sprawdzaj `dir` i kolumnę `Length`.
+- Windows ma własny plik `known_hosts`, więc pierwszy kontakt z serwerem znów pyta o odcisk.
+- Użytkownik `ubuntu` nie jest w grupie `docker` na VPS: Docker wymaga `sudo` (gniazdo `srw-rw---- root docker`). Dodanie do grupy `docker` daje w praktyce prawa roota, więc zostajemy przy `sudo`.
+- Monitoring na VPS jest wyłączony (`sudo docker compose stop` w `~/monitoring`), bo alert `SreLabUnreachable` strzelał, gdy PC działał w Windowsie. Włączenie: `sudo docker compose start`. Do przemyślenia: przesunięcie okna alertu, reguła z `unless`, albo wyciszenia.
+
+### Nowy serwer domowy `sre-labs` – bezpieczna baza (13.11.2026)
+
+**Stan wyjściowy:** Dell OptiPlex (i5, 4 rdzenie, 16 GB RAM, 240 GB dysk), hostname `sre-labs`, Ubuntu Server 26.04, użytkownik `radek`, adres w sieci domowej `192.168.100.127`. BIOS: VT-x/VT-d włączone, AC Recovery = Power On (serwer sam wstaje po zaniku prądu), SATA = AHCI, UEFI. LVM powiększony na cały dysk (`lvextend -r`). Stary PC (`sre-lab`, Linux) wyłączony, jego dysk zostaje jako plan cofnięcia. Stanowisko pracy: Windows, klucz `radek-windows`.
+
+**Co zrobiliśmy**
+1. **Prawa do sekretów** w `~/przenosiny` (przeniesione `lab_vm` + `.pub`, `.aws/`, `telegram_token`): katalogi 700, pliki z sekretami 600, `.pub` 644. Poprawione `.aws` i `.aws/cli` (były 775). Kontrola: `find ~/przenosiny -perm /077` (zostają tylko `.pub` i cache AWS CLI w katalogu chronionym przez rodzica 700).
+2. **SSH tylko kluczem:** `mkdir -p ~/.ssh && chmod 700 ~/.ssh`, klucz publiczny z Windowsa dopisany przez `Get-Content ...id_ed25519.pub | ssh radek@192.168.100.127 "cat >> ~/.ssh/authorized_keys"`, `chmod 600 ~/.ssh/authorized_keys`. Plik `/etc/ssh/sshd_config.d/00-hardening.conf`: `PasswordAuthentication no`, `KbdInteractiveAuthentication no`, `PermitRootLogin no`. Kolejność: `sudo sshd -t`, `sudo systemctl reload ssh`, kontrola przez `sudo sshd -T`. Test: logowanie kluczem wchodzi, a `ssh -o PubkeyAuthentication=no ...` daje `Permission denied (publickey)`.
+3. **Firewall `ufw`:** `default deny incoming`, `default allow outgoing`, `allow from 192.168.100.0/24 to any port 22 proto tcp`, potem `ufw enable`. Przy włączaniu były otwarte trzy sesje SSH jako siatka bezpieczeństwa. Kontrola: `sudo ufw status verbose`.
+4. **Automatyczne aktualizacje:** `unattended-upgrades` aktywne (`enabled`, `active (running)`), `20auto-upgrades` ma oba parametry na `"1"` (codziennie), zegary `apt-daily` (02:07 UTC) i `apt-daily-upgrade` (06:41 UTC). Restart niepotrzebny (`/var/run/reboot-required` nie istnieje).
+5. **Decyzja:** na razie bez `fail2ban`, bo SSH jest dostępne tylko z LAN i tylko kluczem. Wracamy do tego, jeśli serwer zostanie wystawiony na internet.
+
+**Na co uważać**
+- Regułę SSH dodajemy do `ufw` **przed** `enable`, a okno z działającą sesją zostaje otwarte do końca testów.
+- Czytaj `sshd -T`, a nie tylko plik konfiguracyjny: pokazuje wartość, która naprawdę obowiązuje. Nasz plik ma `00-`, bo wygrywa pierwsza wartość dyrektywy (pliki czytane alfabetycznie).
+- Docker omija `ufw`: opublikowany port może być otwarty mimo `deny incoming`. Wiąż porty z `127.0.0.1` lub adresem tunelu i sprawdzaj `ss -tlnp`.
+- Klucz prywatny WireGuard nie opuszcza swojej maszyny: dla `sre-labs` generujemy nową parę, na VPS dodajemy nowego peera i wyłączamy peera starego PC (`10.8.0.2`).
+- Adres `192.168.100.127` pochodzi z DHCP routera. Ustaw w routerze rezerwację po adresie MAC, żeby się nie zmieniał.
+- Zegary aktualizacji ruszą tylko, gdy serwer jest włączony.
+
+**Plan dalej:** Docker, sklonowanie repozytorium i odtworzenie labów (po jednym, z weryfikacją), WireGuard nowego serwera do VPS (nowa para kluczy), wznowienie monitoringu (z przemyślanym oknem alertu), rezerwacja DHCP, wpis `Host sre-labs` w `config` na Windowsie.
+
+**Quiz bloku: 9/10 (90%).** Błędne: ścieżka względna do `.aws/cli` z `~/przenosiny` to `.aws/cli` (od miejsca, w którym stoisz), nie `../cli`.
+
+**Ćwiczenia**
+1. Dlaczego plik w `sshd_config.d` nazywa się `00-hardening.conf`?
+2. Jak udowodnisz, że logowanie hasłem jest wyłączone, a kluczem działa?
+3. Dlaczego regułę SSH dodajemy do `ufw` przed `enable`?
+4. Co oznacza `192.168.100.0/24`?
+5. Czemu opublikowany port Dockera może być dostępny mimo `ufw deny incoming`?
+6. Jakie prawa mają `~/.ssh` i `authorized_keys`?
+
+**Odpowiedzi**
+1. Pliki są czytane alfabetycznie, a wygrywa pierwsza wartość; `00-` jest pierwszy.
+2. `ssh radek@serwer` wchodzi, `ssh -o PubkeyAuthentication=no radek@serwer` daje `Permission denied (publickey)`; dodatkowo `sudo sshd -T | grep passwordauthentication` pokazuje `no`.
+3. Domyślnie `deny incoming` zablokowałoby nowe połączenia SSH i odcięło dostęp.
+4. Wszystkie adresy od `192.168.100.0` do `192.168.100.255` (pierwsze 24 bity stałe).
+5. Docker dopisuje własne reguły `iptables` i omija `ufw`.
+6. Katalog 700, plik 600.
+
+**Zadanie praktyczne:** dopisz na Windowsie w `C:\Users\<nazwa>\.ssh\config` wpis `Host sre-labs` (`HostName 192.168.100.127`, `User radek`, `IdentityFile ~/.ssh/id_ed25519`) przez `Set-Content -Encoding ascii` (bez Notatnika) i sprawdź `ssh sre-labs`.
+
 ---
 
 ## 14. Linux od podstaw – sesja 1: ścieżki, katalogi, prawa
@@ -1117,6 +1176,50 @@ Do powtórki na początku sesji 2: ścieżki względne a bezwzględne, `w` i `x`
 
 **Zadanie praktyczne:** w `~/cwiczenia` utwórz `sesja2b` z plikami `raport1.txt`, `raport2.txt`, `raport10.txt`, `notatka.log`. Zapisz przewidywanie, co wypiszą `ls raport?.txt`, `ls raport*` i `ls *.txt`, uruchom i porównaj. Skopiuj `raport1.txt` jako `raport1_kopia.txt`, dopisz do niego linię przez `>>`, usuń `raport2.txt` i `raport10.txt` przez `rm -i`, a na końcu posprzątaj całą strukturę.
 
+### Sesja 3 (11.11.2026): `w` i `x`, właściciel i grupa, `chgrp`, `umask`
+
+**Co zrobiliśmy:** ćwiczenia na maszynie `vps-twin` (maszyna ćwiczeniowa, katalog `~/lab/cwiczenia/sesja3`): eksperyment z `hej.sh` (`x` uruchamia, `w` zmienia), odczyt właściciela i grupy plików systemowych, `chgrp`, `umask`. `chown` nie był ćwiczony (wymaga `sudo`), wraca w sesji 4.
+
+**Kluczowe informacje**
+- Trzy litery to trzy czynności. Na **pliku**: `r` czytać, `w` zmieniać, `x` uruchomić jako program. Na **katalogu**: `r` zobaczyć listę, `w` tworzyć i usuwać w środku, `x` wejść.
+- W `ls -l` po liczbie dowiązań są **dwie nazwy: najpierw właściciel, potem grupa pliku**. Prawa (`rwxrw-r--`) nie mówią, kto jest właścicielem.
+- Którą trójkę praw system stosuje, sprawdzasz po kolei (pierwsze „tak” wygrywa): 1. jestem właścicielem → trójka właściciela; 2. nie, ale jestem w grupie pliku (sprawdź `id`) → trójka grupy; 3. w przeciwnym razie trójka pozostałych.
+- `id` pokazuje `uid`, grupę główną (`gid`) i grupy dodatkowe. Nowy plik dostaje grupę główną tworzącego, a w Ubuntu grupa główna ma nazwę użytkownika (osobna grupa na użytkownika).
+- `chgrp grupa plik`: właściciel (albo root) może zmienić grupę, ale tylko na grupę, do której sam należy. `chown` (zmiana właściciela) wymaga `sudo`.
+- **`umask`**: maska odejmowana od „maksimum” przy tworzeniu: pliki startują od 666, katalogi od 777. `0002` → plik 664, katalog 775. `0022` → plik 644, katalog 755. `077` → plik 600, katalog 700. Działa tylko na **nowe** pliki, a zmiana w oknie terminala wygasa po jego zamknięciu.
+- Cyfra praw = suma `r`=4, `w`=2, `x`=1 (`6`=`rw-`, `7`=`rwx`).
+- Grupy `sudo`, `docker` i `lxd` dają w praktyce prawa roota. `adm` pozwala czytać logi (`/var/log/syslog`).
+
+**Na co uważać**
+- Pomylenie `w` i `x` (zmienianie a uruchamianie), a także pomylenie właściciela z grupą w `ls -l`.
+- Pytanie „czy jestem w grupie?” zawsze sprawdzaj w `id`, nie z pamięci (np. `adm`).
+- `umask` nie zmienia istniejących plików.
+- `cat /etc/shadow` bez `sudo` daje `Permission denied`, i tak ma być.
+
+**Polecenia:** `id`, `whoami`, `chgrp`, `chown` (tylko omówione), `umask`, `chmod u+x` / `u-w`, `ls -ld`.
+
+**Gdzie szukać w notatniku:** sekcja 15 → „Linux i terminal”; sekcja 16 → „Katalogi, ścieżki i prawa” oraz „Właściciel, grupa, umask”; sekcja 18 (błędy).
+
+**Quiz sesji 3: 9/10 (90%).** Błędne: `umask 0022` daje dla pliku 644 (666−022), nie 755. Do powtórki na start sesji 4: liczenie `umask` dla plików i katalogów, `chown` z `sudo`.
+
+**Ćwiczenia**
+1. Plik ma `-rw-rw-r--`. Co da `./plik` i dlaczego?
+2. Plik ma `-r--r--r--` i jesteś właścicielem. Co da `echo x >> plik`?
+3. W `ls -l` widzisz `root shadow`. Kto jest właścicielem, a kto grupą?
+4. Plik `-rw-r----- root adm`, a Ty masz grupy `radek, adm, sudo`. Którą trójkę stosuje system i czy `cat` zadziała?
+5. Kto może zmienić grupę pliku bez `sudo` i na jaką?
+6. Jakie prawa dostaną nowy plik i nowy katalog przy `umask 0022` oraz `077`?
+
+**Odpowiedzi**
+1. `Permission denied`: brakuje `x`.
+2. `Permission denied`: brakuje `w`.
+3. Właściciel `root`, grupa `shadow`.
+4. Drugą (jesteś w `adm`), czyli `r--`: `cat` zadziała.
+5. Właściciel, tylko na grupę, do której sam należy.
+6. `0022`: plik 644, katalog 755. `077`: plik 600, katalog 700.
+
+**Zadanie praktyczne:** w nowym katalogu `sesja3b` ustaw `umask 027`, przewidź prawa nowego pliku i katalogu, utwórz je i sprawdź `ls -ld`. Potem napisz, kto z grupy i spoza grupy może je czytać. Na koniec przywróć `umask 002`.
+
 ---
 
 ## 15. Słowniczek
@@ -1222,6 +1325,10 @@ Do powtórki na początku sesji 2: ścieżki względne a bezwzględne, `w` i `x`
 - **Przekierowanie**: `>` zapisuje wynik polecenia do pliku (nadpisuje), `>>` dopisuje na końcu.
 - **Wildcard (glob)**: wzorzec rozwijany przez powłokę przed uruchomieniem polecenia. `*` = dowolny ciąg, `?` = jeden znak.
 - **Uzupełnianie Tab**: klawisz Tab dopełnia nazwę pliku lub polecenia.
+- **`id`**: pokazuje `uid`, grupę główną (`gid`) i grupy dodatkowe bieżącego użytkownika.
+- **Grupa główna / dodatkowe**: główna nadaje grupę nowym plikom, dodatkowe dają dostęp (np. `sudo`, `adm`, `docker`).
+- **`umask`**: maska odejmowana od 666 (pliki) i 777 (katalogi) przy tworzeniu. Dotyczy tylko nowych plików.
+- **`chgrp` / `chown`**: zmiana grupy / właściciela pliku. `chown` wymaga `sudo`.
 
 ---
 
@@ -1306,6 +1413,8 @@ ansible-playbook plik.yml --syntax-check
 ssh sre-lab
 ssh-keygen -t ed25519 -f ~/.ssh/nazwa
 ssh-copy-id -i ~/.ssh/nazwa.pub uzytkownik@adres
+ssh-keygen -lF adres        # odcisk serwera zapamiętany w known_hosts
+# Windows (PowerShell): ssh-keygen -t ed25519 -C "nazwa" ; Get-Content $env:USERPROFILE\.ssh\id_ed25519.pub
 ```
 
 ### Prometheus – narzędzia i PromQL
@@ -1388,6 +1497,15 @@ rmdir a/b/c a/b a         # tylko puste, od najgłębszego
 rmdir -p a/b/c            # w górę, dopóki puste
 chmod 600 plik            # r=4 w=2 x=1, cyfry: właściciel grupa pozostali
 chmod u-x katalog         # u/g/o/a, + dodaje, - odbiera
+```
+
+### Właściciel, grupa, umask (Linux)
+```bash
+id ; whoami ; ls -l plik      # właściciel, potem grupa
+chgrp users plik              # tylko grupa, do której należysz
+sudo chown radek:radek plik   # zmiana właściciela wymaga sudo
+umask ; umask 077             # maska: plik 666-maska, katalog 777-maska
+chmod u+x plik ; chmod u-w plik
 ```
 
 ### Pliki, przekierowania i wildcardy (Linux)
@@ -1495,6 +1613,9 @@ Po sesji w chmurze:
 | `No such file or directory` przy ścieżce względnej | stoisz w innym katalogu, niż myślisz | `pwd`, użyj `..` albo ścieżki od `~` |
 | `rmdir: Directory not empty` | w katalogu coś jest (także podkatalog) | `ls -Ra katalog`, usuń od najgłębszego |
 | `Is a directory` po wpisaniu ścieżki | wpisana sama ścieżka zamiast `cd ścieżka` | `cd ścieżka` |
+| `Permission denied` przy `./skrypt` | brak `x` na pliku | `chmod u+x skrypt` |
+| `Permission denied` przy `echo >> plik` | brak `w` na pliku | `chmod u+w plik` |
+| `Permission denied` przy `cat` na pliku systemowym | nie jesteś właścicielem ani w grupie pliku, trzecia trójka nie ma `r` | `ls -l`, `id`, nie obchodź ochrony bez potrzeby |
 | `No such file or directory` przy ścieżce względnej | za mało albo za dużo `..`, albo inne miejsce niż myślisz | `pwd`, policz kroki w górę |
 | plik „zniknął” po `echo x > plik` | `>` nadpisuje całą zawartość | `>>` do dopisywania, ważne pliki najpierw skopiuj |
 | wildcard trafił w więcej plików niż miał | `*` obejmuje też to, czego nie chciałeś | najpierw `ls wzorzec`, potem `rm -i` |
@@ -1507,7 +1628,7 @@ Po sesji w chmurze:
 
 | Etap planu | Status |
 |---|---|
-| Python, Bash, Git, sieci (etap 1) | Linux od podstaw: sesje 1-2 z 8 zrobione (ścieżki, katalogi, prawa; pliki, przekierowania, wildcardy). Do zrobienia: sesje 3-8, potem sieci i Python |
+| Python, Bash, Git, sieci (etap 1) | Linux od podstaw: sesje 1-3 z 8 zrobione (ścieżki, katalogi, prawa; pliki, przekierowania, wildcardy; `w`/`x`, właściciel i grupa, `umask`). Do zrobienia: sesje 4-8, potem sieci i Python |
 | Docker, Terraform, AWS (etap 2) | Docker zrobiony. Terraform i AWS zrobione w podstawach (VPC, EC2, ALB, destroy). Do zrobienia: zdalny stan (S3), moduły, IAM z minimalnymi uprawnieniami |
 | CI/CD i obserwowalność (etap 3) | zrobione w wersji lokalnej (Prometheus, Grafana, Alertmanager, CI, CD) |
 | Kubernetes (etap 4) | tylko test w kind. Do zrobienia |
@@ -1536,3 +1657,6 @@ Najbliższe kroki:
 - Wersja 4.3: dział 14 (Linux od podstaw, sesja 1: ścieżki, katalogi, prawa, zapis liczbowy `chmod`) z planem 8 sesji i ćwiczeniami, słowniczek, ściąga, tabela błędów. Numeracja: Słowniczek 15, Ściąga 16, Lista kontrolna 17, Błędy 18, Status 19, Historia 20.
 - Wersja 4.4: wynik zadania praktycznego i quizu z sesji 1 (6/10), błędy przy `rmdir -p`, lista do powtórki na start sesji 2.
 - Wersja 4.5: Linux sesja 2 (pliki, przekierowania `>` `>>`, `cp`/`mv`/`rm -i`, wildcardy `*` `?`), quiz 7/10, słowniczek, ściąga, tabela błędów, status planu.
+- Wersja 4.6: dostęp do VPS z Windowsa (osobna para kluczy, `authorized_keys`, `config` w PowerShellu), wyłączenie monitoringu VPS, uwaga o grupie `docker`.
+- Wersja 4.7: Linux sesja 3 (`w` i `x`, właściciel i grupa w `ls -l`, `id`, `chgrp`, `umask`), quiz 9/10, słowniczek, ściąga, tabela błędów, status planu.
+- Wersja 4.8: nowy serwer domowy `sre-labs` (prawa do sekretów, SSH tylko kluczem, `ufw`, automatyczne aktualizacje, decyzja o `fail2ban`), quiz 9/10, plan migracji labów.
